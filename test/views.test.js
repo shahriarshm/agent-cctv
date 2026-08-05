@@ -286,3 +286,46 @@ test('a loaded view compiles into a working predicate', () => {
   assert.equal(m(session({ project: 'docs' })), false);
   assert.equal(m(session({ project: 'api', gitBranch: 'wip/x' })), false);
 });
+
+/* ── the route ───────────────────────────────────────────────────────────── */
+
+import { createServer } from '../src/server.js';
+import { Store } from '../src/store.js';
+
+const TOKEN = 'v'.repeat(32);
+
+async function serve(opts = {}) {
+  const server = createServer({ store: new Store(), withSource: false, ...opts });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  return {
+    url: (p) => `http://127.0.0.1:${port}${p}`,
+    close: () => new Promise((r) => server.close(r)),
+  };
+}
+
+test('/api/views needs a token', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    assert.equal((await fetch(s.url('/api/views'))).status, 401);
+    const res = await fetch(s.url(`/api/views?token=${TOKEN}`));
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.views));
+    assert.ok(Array.isArray(body.errors));
+  } finally {
+    await s.close();
+  }
+});
+
+test('/api/views serves what the directory holds', async () => {
+  const dir = viewsDir({ 'needs-me.yaml': 'name: Needs me\nmatch:\n  state: attention\n' });
+  const s = await serve({ token: TOKEN, viewsDir: dir });
+  try {
+    const body = await (await fetch(s.url(`/api/views?token=${TOKEN}`))).json();
+    assert.deepEqual(body.views.map((v) => v.name), ['Needs me']);
+    assert.deepEqual(body.views[0].match, { state: 'attention' });
+  } finally {
+    await s.close();
+  }
+});
