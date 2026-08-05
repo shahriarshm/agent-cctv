@@ -53,3 +53,199 @@ test('refuses what the subset cannot represent', () => {
   // inline {} in this subset to fall back on.
   assert.throws(() => stringifyYaml({ match: {} }), TypeError);
 });
+
+/* ── writing a view ──────────────────────────────────────────────────────── */
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { slugify, writeView, loadViews } from '../src/views.js';
+
+/**
+ * A views directory inside a private parent.
+ *
+ * The parent matters: the traversal tests assert that nothing appeared beside
+ * the views directory, and os.tmpdir() is shared with every other test file
+ * running in parallel — counting entries there measures the suite, not the code.
+ */
+function emptyDir() {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-write-')), 'views');
+  fs.mkdirSync(dir);
+  return dir;
+}
+
+test('slugify reduces a name to something safe to be a filename', () => {
+  assert.equal(slugify('Needs me'), 'needs-me');
+  assert.equal(slugify('Frontend  Work!!'), 'frontend-work');
+  assert.equal(slugify('2 fast'), '2-fast');
+  assert.equal(slugify('   '), '');
+  assert.equal(slugify('---'), '');
+  assert.equal(slugify('../../etc/passwd'), 'etc-passwd');
+});
+
+/** Nothing may ever land outside the views directory, whatever the name says. */
+for (const name of ['../../etc/passwd', 'a/b', '.', '..', '', '   ', '///']) {
+  test(`refuses to write ${JSON.stringify(name)} outside the directory`, () => {
+    const dir = emptyDir();
+    const parent = path.dirname(dir);
+    const before = fs.readdirSync(parent).length;
+    let threw = null;
+    try {
+      writeView({ name, view: {} }, dir);
+    } catch (err) {
+      threw = err;
+    }
+    // Either it refused outright, or — for a name that slugs to something
+    // harmless like `etc-passwd` — it wrote inside the directory and nowhere else.
+    if (threw) assert.equal(threw.status, 400, threw.message);
+    assert.equal(fs.readdirSync(parent).length, before, 'nothing may appear beside the views dir');
+    for (const f of fs.readdirSync(dir)) {
+      assert.match(f, /^[a-z0-9][a-z0-9-]*\.yaml$/, `wrote a suspicious filename: ${f}`);
+    }
+  });
+}
+
+test('writes a view that loads back as the same view', () => {
+  const dir = emptyDir();
+  const { id, file } = writeView(
+    {
+      name: 'Frontend work',
+      view: {
+        mode: 'focus',
+        groupBy: 'branch',
+        match: { project: ['web-*', 'api'], exclude: { cwd: '*/scratch/*' } },
+      },
+    },
+    dir
+  );
+  assert.equal(id, 'frontend-work');
+  assert.equal(path.basename(file), 'frontend-work.yaml');
+
+  const { views, errors } = loadViews(dir);
+  assert.deepEqual(errors, []);
+  assert.equal(views.length, 1);
+  assert.equal(views[0].name, 'Frontend work');
+  assert.equal(views[0].mode, 'focus');
+  assert.equal(views[0].groupBy, 'branch');
+  assert.deepEqual(views[0].match, { project: ['web-*', 'api'], exclude: { cwd: '*/scratch/*' } });
+});
+
+test('a written file says where it came from and stays hand-editable', () => {
+  const dir = emptyDir();
+  const { file } = writeView({ name: 'X', view: {} }, dir);
+  const body = fs.readFileSync(file, 'utf8');
+  assert.match(body, /^# Written by the agent-cctv dashboard/);
+  assert.match(body, /name: X/);
+  // Defaults are not written out: a saved file says only what it means.
+  assert.doesNotMatch(body, /order:/);
+  assert.doesNotMatch(body, /mode:/);
+  assert.doesNotMatch(body, /groupBy:/);
+  assert.doesNotMatch(body, /match:/);
+});
+
+test('an existing view is not overwritten unless asked', () => {
+  const dir = emptyDir();
+  writeView({ name: 'Dup', view: { groupBy: 'project' } }, dir);
+  const err = refusedWrite(() => writeView({ name: 'Dup', view: {} }, dir));
+  assert.equal(err.status, 409);
+  assert.match(err.message, /already exists/);
+
+  writeView({ name: 'Dup', view: { groupBy: 'agent' }, replace: true }, dir);
+  assert.equal(loadViews(dir).views[0].groupBy, 'agent');
+});
+
+test('a view that would not load cannot be written', () => {
+  const dir = emptyDir();
+  const err = refusedWrite(() => writeView({ name: 'Bad', view: { match: { repo: 'x' } } }, dir));
+  assert.equal(err.status, 400);
+  assert.match(err.message, /unknown match field/);
+  assert.deepEqual(fs.readdirSync(dir), [], 'nothing may be written when validation fails');
+});
+
+function refusedWrite(fn) {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  assert.fail('expected a refusal, nothing was thrown');
+}
+
+/* ── the write route ─────────────────────────────────────────────────────── */
+
+import { createServer } from '../src/server.js';
+import { Store } from '../src/store.js';
+
+const TOKEN = 'w'.repeat(32);
+
+async function serve(viewsDir) {
+  const server = createServer({ store: new Store(), withSource: false, token: TOKEN, viewsDir });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  return {
+    post: (body, headers = {}) =>
+      fetch(`http://127.0.0.1:${port}/api/views?token=${TOKEN}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+      }),
+    get: () => fetch(`http://127.0.0.1:${port}/api/views?token=${TOKEN}`).then((r) => r.json()),
+    bare: (body) =>
+      fetch(`http://127.0.0.1:${port}/api/views`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    close: () => new Promise((r) => server.close(r)),
+  };
+}
+
+test('POST /api/views requires a token', async () => {
+  const s = await serve(emptyDir());
+  try {
+    assert.equal((await s.bare({ name: 'X' })).status, 401);
+  } finally {
+    await s.close();
+  }
+});
+
+test('POST /api/views writes a view and serves it back', async () => {
+  const dir = emptyDir();
+  const s = await serve(dir);
+  try {
+    const res = await s.post({ name: 'Needs me', view: { match: { state: 'attention' } } });
+    assert.equal(res.status, 201);
+    assert.deepEqual(await res.json(), { id: 'needs-me' });
+
+    const catalog = await s.get();
+    assert.deepEqual(catalog.views.map((v) => v.id), ['needs-me']);
+    assert.deepEqual(catalog.errors, []);
+  } finally {
+    await s.close();
+  }
+});
+
+test('POST /api/views refuses a duplicate unless told to replace', async () => {
+  const dir = emptyDir();
+  const s = await serve(dir);
+  try {
+    assert.equal((await s.post({ name: 'Dup' })).status, 201);
+    const dup = await s.post({ name: 'Dup' });
+    assert.equal(dup.status, 409);
+    assert.match((await dup.json()).error, /already exists/);
+    assert.equal((await s.post({ name: 'Dup', replace: true })).status, 201);
+  } finally {
+    await s.close();
+  }
+});
+
+test('POST /api/views refuses a nameless view and an invalid one', async () => {
+  const s = await serve(emptyDir());
+  try {
+    assert.equal((await s.post({ name: '   ' })).status, 400);
+    assert.equal((await s.post({ name: 'X', view: { match: { repo: 'y' } } })).status, 400);
+    assert.equal((await s.post({ name: 'X', view: { mode: 'sideways' } })).status, 400);
+  } finally {
+    await s.close();
+  }
+});
