@@ -11,7 +11,7 @@ import { CodexSource, capabilities as codexCapabilities, SOURCE as CODEX } from 
 import { fromHook } from './sources/claude-code/hooks.js';
 import { readTasks } from './sources/claude-code/tasks.js';
 import { listSessions, loadSession } from './history.js';
-import { loadViews, watchViews } from './views.js';
+import { loadViews, watchViews, writeView } from './views.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -237,6 +237,30 @@ export function createServer({
     }
 
     if (route === '/api/state') return json(res, 200, store.snapshot());
+
+    if (route === '/api/views' && req.method === 'POST') {
+      // The only endpoint that writes anything a person will read back. Its
+      // guards are in writeView(): a slug that must match a narrow pattern, a
+      // resolved-path check, a fixed extension, and validation through the
+      // loader's own rules so an unreadable view cannot be written.
+      let body;
+      try {
+        body = safeJson(await readBody(req, 64 * 1024));
+      } catch {
+        return json(res, 413, { error: 'too large' });
+      }
+      if (!body) return json(res, 400, { error: 'bad json' });
+      try {
+        const { id } = writeView(body, viewsDir);
+        // Re-read now rather than waiting on the watcher, so the response and
+        // the broadcast agree about what exists.
+        views = loadViews(viewsDir);
+        broadcast('views', views);
+        return json(res, 201, { id });
+      } catch (err) {
+        return json(res, err.status || 500, { error: err.message });
+      }
+    }
 
     if (route === '/api/views') return json(res, 200, views);
 

@@ -75,6 +75,14 @@
           <select id="pick-project"><option value="all">all</option></select>
         </label>
         <label class="pick">
+          <span>mode</span>
+          <select id="pick-mode">
+            <option value="wall">wall</option>
+            <option value="focus">focus</option>
+            <option value="tail">tail</option>
+          </select>
+        </label>
+        <label class="pick" id="pick-group-label">
           <span>group by</span>
           <select id="pick-group">
             <option value="none">nothing</option>
@@ -106,6 +114,19 @@
 
     <main class="wall" id="wall"></main>
 
+    <!-- One session big, the rest as a rail. The tiles are the wall's own nodes,
+         moved rather than rebuilt, so an activity strip keeps its history. -->
+    <section class="focus" id="focus" hidden aria-label="Focused session">
+      <div class="focus-main" id="focus-main">
+        <div class="focus-slot" id="focus-slot"></div>
+        <div class="timeline focus-timeline" id="focus-timeline"></div>
+      </div>
+      <div class="focus-rail" id="focus-rail"></div>
+    </section>
+
+    <!-- The whole room as one stream. -->
+    <section class="tail" id="tail" hidden aria-label="All activity"></section>
+
     <section class="archive" id="archive" hidden aria-label="Past sessions">
       <div class="archive-head">
         <h2>Archive</h2>
@@ -126,6 +147,30 @@
     </section>
 
     <div class="scrim" id="scrim" data-open="false"></div>
+
+    <!-- Saving writes a view file. It is the only thing in this dashboard that
+         writes anything, and it only ever runs from this button. -->
+    <div class="save-scrim" id="save-scrim" hidden></div>
+    <div
+      class="save-dialog"
+      id="save-dialog"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="save-title"
+    >
+      <h2 id="save-title">Save this view</h2>
+      <label class="save-field">
+        <span>Name</span>
+        <input id="save-name" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="save-captures" id="save-captures"></p>
+      <p class="save-error" id="save-error" hidden role="alert"></p>
+      <div class="save-actions">
+        <button class="chip" id="save-cancel" type="button">Cancel</button>
+        <button class="chip save-go" id="save-go" type="button">Save</button>
+      </div>
+    </div>
 
     <aside
       class="inspector"

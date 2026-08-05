@@ -10,7 +10,13 @@
 import { compile } from './match.js';
 
 /** Always first, never a file. Matches everything, which is the old behaviour. */
-export const EVERYTHING = { id: 'all', name: 'Everything', order: -1, groupBy: null, match: {} };
+export const EVERYTHING = { id: 'all', name: 'Everything', order: -1, mode: 'wall', groupBy: null, match: {} };
+
+/**
+ * The picker's last entry. Not a view - choosing it opens the save dialog.
+ * Underscores cannot appear in a slug, so this can never collide with a real id.
+ */
+const SAVE_AS = '__save_as__';
 
 const label = document.getElementById('pick-view-label');
 const select = document.getElementById('pick-view');
@@ -50,13 +56,14 @@ function resolve() {
 }
 
 function paint(errors) {
-  // A picker holding one built-in view is chrome that says nothing. Someone who
-  // never writes a view file sees the header they see today.
-  label.hidden = catalog.length < 2;
+  // Always shown now, because this is the only way to reach Save. The first
+  // release hid it when there were no views; that was right when views could
+  // only be made in an editor, and wrong the moment they could be made here.
+  label.hidden = false;
 
-  const wanted = catalog.map((v) => v.id).join('\0');
-  if (select.dataset.ids !== wanted) {
-    select.dataset.ids = wanted;
+  const ids = catalog.map((v) => v.id).join('\0');
+  if (select.dataset.ids !== ids) {
+    select.dataset.ids = ids;
     select.replaceChildren();
     for (const v of catalog) {
       const opt = document.createElement('option');
@@ -64,6 +71,13 @@ function paint(errors) {
       opt.textContent = v.name;
       select.append(opt);
     }
+    const sep = document.createElement('option');
+    sep.disabled = true;
+    sep.textContent = '\u2500'.repeat(12);
+    const save = document.createElement('option');
+    save.value = SAVE_AS;
+    save.textContent = '\uFF0B Save current as\u2026';
+    select.append(sep, save);
   }
   select.value = current.id;
 
@@ -93,9 +107,126 @@ export function mountViews({ initialId, onSelect }) {
   wanted = initialId || EVERYTHING.id;
   resolve();
   select.addEventListener('change', () => {
+    if (select.value === SAVE_AS) {
+      // Put the selection back before anything else happens: choosing "save"
+      // must never be a way to accidentally leave the view you were on, and
+      // cancelling has to land you exactly where you started.
+      select.value = current.id;
+      openSave();
+      return;
+    }
     wanted = select.value;
     resolve();
     notify(current);
   });
   paint([]);
 }
+
+/* ── saving ──────────────────────────────────────────────────────────────── */
+
+const dialog = document.getElementById('save-dialog');
+const saveScrim = document.getElementById('save-scrim');
+const nameInput = document.getElementById('save-name');
+const captures = document.getElementById('save-captures');
+const errorEl = document.getElementById('save-error');
+
+/** Set by app.js: reads the header, returns the view body to POST. */
+let compose = () => ({ match: {} });
+let post = async () => ({ ok: false, status: 0, error: 'not wired' });
+/** True once the user has answered "replace it?" for the name in the field. */
+let replacing = false;
+
+export function wireSave({ composeView, postView }) {
+  compose = composeView;
+  post = postView;
+}
+
+function closeSave() {
+  dialog.hidden = true;
+  saveScrim.hidden = true;
+  replacing = false;
+  errorEl.hidden = true;
+  select.focus();
+}
+
+function openSave() {
+  const body = compose();
+  errorEl.hidden = true;
+  replacing = false;
+  nameInput.value = suggestName(body);
+  captures.textContent = describeCapture(body);
+  dialog.hidden = false;
+  saveScrim.hidden = false;
+  nameInput.focus();
+  nameInput.select();
+}
+
+/** A name you would probably have typed yourself, from what is actually set. */
+function suggestName(body) {
+  const m = body.match || {};
+  const bits = [];
+  if (m.project && !Array.isArray(m.project)) bits.push(m.project);
+  if (m.agent && !Array.isArray(m.agent)) bits.push(m.agent);
+  if (m.state) bits.push({ attention: 'needs me', busy: 'working', live: 'live' }[m.state] || m.state);
+  if (body.mode && body.mode !== 'wall') bits.push(body.mode);
+  const guess = bits.join(' ').trim();
+  return guess ? guess[0].toUpperCase() + guess.slice(1) : 'My view';
+}
+
+/**
+ * What the file will contain, in words.
+ *
+ * The one failure this dialog can have is saving something other than what the
+ * user thinks they are saving, so it says so before they commit.
+ */
+function describeCapture(body) {
+  const m = body.match || {};
+  const bits = [];
+  for (const [field, value] of Object.entries(m)) {
+    if (field === 'exclude') continue;
+    bits.push(`${field} ${[].concat(value).join(' or ')}`);
+  }
+  if (m.exclude) bits.push(`not ${Object.keys(m.exclude).join(', ')}`);
+  if (body.groupBy) bits.push(`grouped by ${body.groupBy}`);
+  if (body.mode && body.mode !== 'wall') bits.push(`${body.mode} mode`);
+  return bits.length ? `Captures: ${bits.join(' · ')}.` : 'Captures: every session, as a plain wall.';
+}
+
+async function submit() {
+  const name = nameInput.value.trim();
+  if (!name) {
+    errorEl.hidden = false;
+    errorEl.textContent = 'Give it a name.';
+    return;
+  }
+  const res = await post({ name, view: compose(), replace: replacing });
+  if (res.ok) {
+    // The catalog arrives on its own over the stream; just point at the new one.
+    wanted = res.id;
+    resolve();
+    select.value = current.id;
+    closeSave();
+    return;
+  }
+  errorEl.hidden = false;
+  if (res.status === 409) {
+    replacing = true;
+    errorEl.textContent = `A view called "${name}" already exists. Save again to replace it.`;
+    return;
+  }
+  errorEl.textContent = res.error || 'Could not save that.';
+}
+
+document.getElementById('save-go').addEventListener('click', submit);
+document.getElementById('save-cancel').addEventListener('click', closeSave);
+saveScrim.addEventListener('click', closeSave);
+nameInput.addEventListener('input', () => {
+  // A different name is a different question; do not carry a "replace" answer
+  // from the last one over to it.
+  replacing = false;
+  errorEl.hidden = true;
+});
+dialog.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSave();
+  if (e.key === 'Enter') submit();
+});

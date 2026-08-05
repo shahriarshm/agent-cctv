@@ -12,12 +12,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { VIEWS_DIR } from './paths.js';
-import { parseYaml } from './yaml.js';
+import { parseYaml, stringifyYaml } from './yaml.js';
 import { FIELDS, STATES } from '../public/match.js';
 
-const TOP_KEYS = ['name', 'order', 'groupBy', 'match'];
+const TOP_KEYS = ['name', 'order', 'mode', 'groupBy', 'match'];
 /** Must stay in step with GROUPS in public/app.js. */
 const GROUP_BY = ['none', 'project', 'agent', 'state', 'branch'];
+/** How the wall is drawn. Must stay in step with MODES in public/app.js. */
+const MODES = ['wall', 'focus', 'tail'];
 const EXTENSIONS = new Set(['.yaml', '.yml', '.json']);
 const MATCH_FIELDS = [...Object.keys(FIELDS), 'state', 'exclude'];
 
@@ -106,10 +108,13 @@ function normalize(doc, id, lines) {
     fail(`"groupBy" must be one of ${GROUP_BY.join(', ')}`, 'groupBy');
   }
 
+  const mode = doc.mode === undefined ? 'wall' : doc.mode;
+  if (!MODES.includes(mode)) fail(`"mode" must be one of ${MODES.join(', ')}`, 'mode');
+
   const match = doc.match === undefined ? {} : doc.match;
   checkMatch(match, 'match', fail, false);
 
-  return { id, name: name.trim(), order, groupBy, match };
+  return { id, name: name.trim(), order, mode, groupBy, match };
 }
 
 function checkMatch(match, keyPath, fail, inExclude) {
@@ -140,6 +145,86 @@ function checkMatch(match, keyPath, fail, inExclude) {
       }
     }
   }
+}
+
+/* ── writing ─────────────────────────────────────────────────────────────── */
+
+/**
+ * The one place this tool writes a file someone else will read.
+ *
+ * The earlier design said views were read and never written. That was right
+ * until saving from the dashboard became the way most people would make their
+ * first view — a feature nobody can reach is not a feature. What has not
+ * changed is the blast radius: this writes `<slug>.yaml`, inside the views
+ * directory, and can express nothing else. It is not a control action on a
+ * session, and the argument for keeping those out still stands.
+ */
+const SLUG = /^[a-z0-9][a-z0-9-]*$/;
+
+export class ViewWriteError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.name = 'ViewWriteError';
+    this.status = status;
+  }
+}
+
+/** A display name reduced to something that can safely be a filename. */
+export function slugify(name) {
+  return String(name ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export function writeView({ name, view = {}, replace = false }, dir = VIEWS_DIR) {
+  const id = slugify(name);
+  // The slug rule is the guard. The resolved-path check below is the second
+  // one, on the assumption that this rule will eventually be edited by someone
+  // who has not thought about `..` for as long as this comment took to write.
+  if (!SLUG.test(id)) {
+    throw new ViewWriteError('a view needs a name with letters or digits in it', 400);
+  }
+
+  const file = path.join(dir, `${id}.yaml`);
+  if (path.dirname(path.resolve(file)) !== path.resolve(dir)) {
+    throw new ViewWriteError('refusing to write outside the views directory', 400);
+  }
+  if (!replace && fs.existsSync(file)) {
+    throw new ViewWriteError(`a view called "${id}" already exists`, 409);
+  }
+
+  // Validated by the loader's own rules, so a view that could not be read back
+  // can never be written in the first place.
+  let normalized;
+  try {
+    normalized = normalize({ ...view, name: String(name).trim() }, id, new Map());
+  } catch (err) {
+    throw new ViewWriteError(err.message, 400);
+  }
+
+  const body =
+    '# Written by the agent-cctv dashboard. Edit it by hand — this is an\n' +
+    '# ordinary view file, and the format is in the README.\n' +
+    stringifyYaml(strip(normalized));
+
+  fs.mkdirSync(dir, { recursive: true });
+  // Atomic: a half-written view file is one the loader would report as broken,
+  // and a watcher fires on the first byte.
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, body);
+  fs.renameSync(tmp, file);
+  return { id, file };
+}
+
+/** A saved file says only what it means — defaults are left out. */
+function strip(v) {
+  const out = { name: v.name };
+  if (v.order !== 100) out.order = v.order;
+  if (v.mode !== 'wall') out.mode = v.mode;
+  if (v.groupBy) out.groupBy = v.groupBy;
+  if (Object.keys(v.match || {}).length) out.match = v.match;
+  return out;
 }
 
 /**

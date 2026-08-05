@@ -55,7 +55,13 @@ const titleEl = document.getElementById('inspector-title');
 
 import { sourceMeta } from './icons.js';
 import { shouldNotify, describe as describeAlert } from './notify.js';
-import { mountViews, setViews, inView, currentView, wantedViewId } from './views.js';
+import { mountViews, setViews, inView, currentView, wantedViewId, wireSave } from './views.js';
+import { el, shortPath, plain, since, clockTime, tokens } from './format.js';
+import { createTimeline } from './timeline.js';
+import { createFocus, createTail } from './modes.js';
+
+/** The inspector's timeline. Focus mode makes a second one of these. */
+const inspectorTimeline = createTimeline(timelineEl);
 
 const sessions = new Map();
 const tiles = new Map();
@@ -63,7 +69,7 @@ const groupNodes = new Map();
 /** A dashboard you leave open should come back the way you left it. */
 const FILTER_KEY = 'agent-cctv:view';
 const filters = Object.assign(
-  { state: 'all', source: 'all', project: 'all', groupBy: 'none', notify: false },
+  { state: 'all', source: 'all', project: 'all', groupBy: 'none', mode: 'wall', notify: false },
   (() => {
     try {
       return JSON.parse(localStorage.getItem(FILTER_KEY)) || {};
@@ -83,62 +89,6 @@ let selected = null;
 
 /* ── helpers ───────────────────────────────────────────────────────────── */
 
-function el(tag, className, text) {
-  const n = document.createElement(tag);
-  if (className) n.className = className;
-  if (text != null) n.textContent = text;
-  return n;
-}
-
-function shortPath(p) {
-  if (!p) return '';
-  return p.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
-}
-
-/** Agents write markdown; a tile shows plain text. Strip the syntax, keep the words. */
-function plain(s) {
-  if (!s) return '';
-  return s
-    .replace(/```[\s\S]*?```/g, ' ⟨code⟩ ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/(^|\s)\*([^*\n]+)\*/g, '$1$2')
-    .replace(/^\s*[-*]\s+/gm, '· ')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * How long it has been in this state.
- *
- * Seconds are dropped past a minute on purpose. On an instrument whose attention
- * currency is motion, a dozen tiles each rewriting "4m 32s" → "4m 33s" every
- * second is constant peripheral flicker that means nothing — and it trains you to
- * ignore exactly the kind of movement the wall uses to say something is wrong.
- * Past a minute the text changes once a minute, and motion is meaningful again.
- */
-function since(ts) {
-  if (!ts) return '';
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return s + 's';
-  const m = Math.floor(s / 60);
-  if (m < 60) return m + 'm';
-  const h = Math.floor(m / 60);
-  return h + 'h ' + (m % 60) + 'm';
-}
-
-function clockTime(ts) {
-  return new Date(ts).toLocaleTimeString([], { hour12: false });
-}
-
-function tokens(n) {
-  if (!n) return '0';
-  if (n < 1000) return String(n);
-  if (n < 1e6) return Math.round(n / 1000) + 'k';
-  return (n / 1e6).toFixed(n < 1e7 ? 1 : 0) + 'M';
-}
 
 /**
  * How full the model's context is. Only the agents that record their own window
@@ -364,6 +314,7 @@ function paintStrip(tile, events) {
 
 function upsert(s) {
   const prev = sessions.get(s.id);
+  if (!prev) tailDirty = true;
   sessions.set(s.id, s);
   alertFor(prev, s);
   let tile = tiles.get(s.id);
@@ -380,6 +331,7 @@ function upsert(s) {
 }
 
 function remove(id) {
+  tailDirty = true;
   tiles.get(id)?.remove();
   tiles.delete(id);
   sessions.delete(id);
@@ -493,6 +445,21 @@ function layout() {
   const shown = [...sessions.values()]
     .filter(visible)
     .sort((a, b) => rank(a) - rank(b) || b.lastActivityAt - a.lastActivityAt);
+
+  // Focus and tail draw the same sessions a different way. They are handed the
+  // list the wall has already filtered and ranked, so all three modes agree
+  // about what is on screen and in what order.
+  if (filters.mode === 'focus') {
+    focusView.show(shown, emptyCopy());
+    return;
+  }
+  if (filters.mode === 'tail') {
+    if (tailDirty) {
+      tailView.show(shown);
+      tailDirty = false;
+    }
+    return;
+  }
 
   const grouping = GROUPS[filters.groupBy];
   wall.dataset.grouped = String(!!grouping);
@@ -662,7 +629,7 @@ async function openInspector(id) {
     const detail = await res.json();
     renderInspectorMeta(detail);
     renderTasks(detail.tasks);
-    renderTimeline(detail.events || []);
+    inspectorTimeline.render(detail.events || []);
   } catch {}
 }
 
@@ -755,137 +722,6 @@ function renderTasks(tasks) {
   }
 }
 
-/** How long a tool took. Sub-second calls don't get one — a read that finished in
-    40ms is not news, and printing it on every row buries the one that took 90s. */
-function took(ms) {
-  if (ms == null || ms < 1000) return '';
-  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
-  const s = Math.round(ms / 1000);
-  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
-}
-
-/**
- * The row for one event. Built once and repainted in place, because a tool call's
- * row has to survive its own completion — see `foldTools`.
- */
-function buildEntry(ev) {
-  const entry = el('div', 'entry');
-  entry.dataset.lane = ev.lane || 'main';
-  entry.dataset.id = ev.id;
-  entry.dataset.time = clockTime(ev.ts);
-  const time = el('time', null, clockTime(ev.ts));
-  time.dateTime = new Date(ev.ts).toISOString();
-  const col = el('div');
-  const head = el('div', 'label');
-  col.append(head, el('div', 'detail'));
-  entry.append(time, col);
-  entry._refs = { label: head, detail: col.lastElementChild };
-  paintEntry(entry, ev);
-  return entry;
-}
-
-function paintEntry(entry, ev) {
-  const { label, detail } = entry._refs;
-  entry.dataset.kind = ev.kind;
-  entry.dataset.error = String(ev.tool?.ok === false);
-  if (ev.tool?.id) entry.dataset.tool = ev.tool.id;
-  // 'start' means still in flight, which is what earns the amber label.
-  entry.dataset.phase = ev.tool?.phase || '';
-
-  label.replaceChildren(document.createTextNode(ev.label));
-  const t = took(ev.tool?.durationMs);
-  if (t) label.append(el('span', 'took', t));
-
-  const prose = ev.kind === 'assistant_text' || ev.kind === 'thinking' || ev.kind === 'prompt';
-  detail.hidden = !ev.detail;
-  detail.textContent = ev.detail ? (prose ? plain(ev.detail) : ev.detail) : '';
-}
-
-/**
- * One row per tool call, not two.
- *
- * A tool emits `tool_start` and later `tool_end`, and the pair carries the same
- * `tool.id` *and the same detail string* — so a busy turn rendered as stacks of
- * near-identical rows with the whole command printed twice, once under "Running
- * Bash" and again under "Bash done". They are one thing that happened, so they are
- * one row: it appears when the call starts, and is completed in place — label,
- * outcome, duration — when the result lands.
- *
- * A `tool_end` with no matching start still gets its own row. Codex emits some of
- * those with no start at all, and inventing a call we never saw would be worse
- * than showing the result on its own.
- */
-function foldTools(events) {
-  const out = [];
-  const open = new Map();
-  for (const ev of events) {
-    const id = ev.tool?.id;
-    if (ev.kind === 'tool_end' && id != null && open.has(id)) {
-      const at = open.get(id);
-      open.delete(id);
-      out[at] = mergeToolPair(out[at], ev);
-      continue;
-    }
-    if (ev.kind === 'tool_start' && id != null) open.set(id, out.length);
-    out.push(ev);
-  }
-  return out;
-}
-
-/** The row keeps the start's identity and position — it is the call, and the call
-    happened when it began — and takes everything it learned from the result. */
-function mergeToolPair(start, end) {
-  return { ...end, id: start.id, ts: start.ts, detail: end.detail || start.detail };
-}
-
-/**
- * A tool call and its result land in the same second, so a busy turn renders as a
- * column of six identical timestamps. Only the first of a run is printed at full
- * strength; the repeats stay in place for alignment but fade back, which is what
- * lets you see where a turn actually began.
- */
-function renderTimeline(events) {
-  timelineEl.replaceChildren();
-  let above = null;
-  // Folded before the slice, so a call is never cut off from its own result.
-  for (const ev of foldTools(events).slice(-120).reverse()) {
-    const entry = buildEntry(ev);
-    if (above && above.dataset.time === entry.dataset.time) entry.dataset.repeat = 'true';
-    timelineEl.append(entry);
-    above = entry;
-  }
-}
-
-/** The row this result belongs to, if its call is still on screen. */
-function openCall(ev) {
-  const id = ev.tool?.id;
-  if (ev.kind !== 'tool_end' || id == null) return null;
-  return timelineEl.querySelector(`.entry[data-phase="start"][data-tool="${CSS.escape(String(id))}"]`);
-}
-
-/** Newest first, so a live event goes on top rather than triggering a refetch. */
-function prependEntry(ev) {
-  // A result completes the row its call already made rather than adding a second
-  // one — the live path has to fold exactly like `renderTimeline` does.
-  const running = openCall(ev);
-  if (running) {
-    // The row keeps its own id and position; only what the result taught us
-    // changes. A result with no detail of its own keeps the call's.
-    return paintEntry(running, {
-      ...ev,
-      id: running.dataset.id,
-      detail: ev.detail || running._refs.detail.textContent,
-    });
-  }
-
-  if (timelineEl.querySelector(`[data-id="${CSS.escape(ev.id)}"]`)) return;
-  const entry = buildEntry(ev);
-  const below = timelineEl.firstElementChild;
-  // The newest event is never the repeat; the one it lands on top of becomes one.
-  if (below && below.dataset.time === entry.dataset.time) below.dataset.repeat = 'true';
-  timelineEl.prepend(entry);
-  while (timelineEl.childElementCount > 200) timelineEl.removeChild(timelineEl.lastElementChild);
-}
 
 closeBtn.addEventListener('click', closeInspector);
 scrim.addEventListener('click', closeInspector);
@@ -997,7 +833,7 @@ async function openHistory(id) {
     const detail = await res.json();
     renderInspectorMeta(detail);
     renderTasks(detail.tasks);
-    renderTimeline(detail.events || []);
+    inspectorTimeline.render(detail.events || []);
   } catch {
     titleEl.textContent = 'Could not read that session.';
   }
@@ -1024,6 +860,7 @@ const projectSel = document.getElementById('pick-project');
 
 function applyFilters() {
   saveFilters();
+  tailDirty = true;
   layout();
 }
 
@@ -1128,6 +965,85 @@ groupSel.addEventListener('change', () => {
   filters.groupBy = groupSel.value;
   applyFilters();
 });
+
+/* ── modes ─────────────────────────────────────────────────────────────── */
+
+/** Must stay in step with MODES in src/views.js. */
+const MODES = ['wall', 'focus', 'tail'];
+const modeSel = document.getElementById('pick-mode');
+const focusEl = document.getElementById('focus');
+const tailEl = document.getElementById('tail');
+const groupLabel = document.getElementById('pick-group-label');
+
+const focusView = createFocus({
+  slot: document.getElementById('focus-slot'),
+  rail: document.getElementById('focus-rail'),
+  timeline: document.getElementById('focus-timeline'),
+  tileFor: (id) => tiles.get(id),
+  fetchSession: async (id) => {
+    try {
+      const res = await fetch(api('/api/session/' + encodeURIComponent(id)));
+      return res.ok ? await res.json() : null;
+    } catch {
+      return null;
+    }
+  },
+});
+const tailView = createTail(tailEl);
+/** Tail rebuilds from scratch only when the population changed, not on every
+    tile repaint — otherwise one event would redraw five hundred rows. */
+let tailDirty = true;
+
+/**
+ * `masthead.dataset.mode` already means archive-vs-wall, so the display mode
+ * lives on the body under its own name.
+ */
+function setMode(mode, { fromUser = false } = {}) {
+  if (!MODES.includes(mode)) mode = 'wall';
+  const changed = filters.mode !== mode;
+  filters.mode = mode;
+  modeSel.value = mode;
+  document.body.dataset.viewMode = mode;
+
+  wall.hidden = mode !== 'wall';
+  focusEl.hidden = mode !== 'focus';
+  tailEl.hidden = mode !== 'tail';
+  // Grouping only carves up a grid. A control left visible and inert is worse
+  // than one that is not there.
+  groupLabel.hidden = mode !== 'wall';
+
+  if (changed) {
+    // Tiles live in whichever container the last mode left them in; hand them
+    // back before the new one starts moving them around.
+    if (mode !== 'focus') focusView.hide();
+    if (mode === 'tail') tailDirty = true;
+    else tailView.clear();
+    if (mode === 'wall') for (const tile of tiles.values()) wall.append(tile);
+  }
+  if (fromUser) saveFilters();
+  layout();
+}
+
+modeSel.addEventListener('change', () => setMode(modeSel.value, { fromUser: true }));
+
+/*
+  A click in the rail promotes that session rather than opening the drawer — in
+  focus mode the big panel is already the detail view. Captured, so it runs
+  before the tile's own click handler.
+*/
+document.getElementById('focus-rail').addEventListener(
+  'click',
+  (e) => {
+    const tile = e.target.closest('.tile');
+    if (!tile) return;
+    e.stopPropagation();
+    const id = [...tiles.entries()].find(([, node]) => node === tile)?.[0];
+    if (!id) return;
+    focusView.pin(id);
+    layout();
+  },
+  true
+);
 
 /* ── state filter ──────────────────────────────────────────────────────── */
 
@@ -1260,7 +1176,14 @@ function connect() {
     const ev = JSON.parse(e.data);
     const tile = tiles.get(ev.sessionId);
     if (tile) paintStrip(tile, [ev]);
-    if (selected === ev.sessionId) prependEntry(ev);
+    if (selected === ev.sessionId) inspectorTimeline.prepend(ev);
+    if (filters.mode === 'focus') focusView.activity(ev);
+    // Scoped to the view, exactly like alerts: a stream that quietly included
+    // sessions the view excludes would be lying about what you are watching.
+    if (filters.mode === 'tail') {
+      const s = sessions.get(ev.sessionId);
+      if (s && visible(s)) tailView.activity(ev, ev.sessionName || s.name);
+    }
   });
 
   es.addEventListener('removed', (e) => remove(JSON.parse(e.data).id));
@@ -1288,10 +1211,57 @@ function applyView(view, { seedGroup = true } = {}) {
     filters.groupBy = view.groupBy;
     groupSel.value = view.groupBy;
   }
+  if (seedGroup && view.mode) setMode(view.mode);
+  tailDirty = true;
   saveFilters();
   refreshFilterOptions();
   layout();
   paintStats();
+}
+
+/**
+ * What Save writes: the current view's own match, with the header's narrowing
+ * laid over it.
+ *
+ * The composition is the point. A hand-written view with `project: [web-*, api]`
+ * and an `exclude:` block, narrowed in the header to one project and saved,
+ * keeps its exclusion — nothing a person typed is dropped on the floor. What
+ * cannot survive is anything the header cannot say: the globs and lists come
+ * from the base view or from editing the file afterwards.
+ */
+const SAVED_STATE = { live: 'live', busy: 'busy', attention: 'attention' };
+
+function composeView() {
+  const base = currentView().match || {};
+  const match = { ...base };
+  if (base.exclude) match.exclude = { ...base.exclude };
+
+  const state = SAVED_STATE[filters.state];
+  if (state) match.state = state;
+  else delete match.state;
+
+  if (filters.source !== 'all') match.agent = filters.source;
+  if (filters.project !== 'all') match.project = filters.project;
+
+  const body = { match };
+  if (filters.groupBy && filters.groupBy !== 'none') body.groupBy = filters.groupBy;
+  if (filters.mode && filters.mode !== 'wall') body.mode = filters.mode;
+  return body;
+}
+
+async function postView(payload) {
+  try {
+    const res = await fetch(api('/api/views'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, id: data.id, error: data.error };
+  } catch (err) {
+    return { ok: false, status: 0, error: 'Could not reach the dashboard.' };
+  }
 }
 
 async function loadViewCatalog() {
@@ -1302,6 +1272,9 @@ async function loadViewCatalog() {
   } catch {}
 }
 
+setMode(filters.mode);
+
+wireSave({ composeView, postView });
 mountViews({ initialId: viewParam || filters.view, onSelect: applyView });
 
 layout();
