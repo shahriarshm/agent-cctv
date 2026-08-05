@@ -6,7 +6,7 @@ import { Store } from '../src/store.js';
 import { resolve, validate, ConfigError } from '../src/config.js';
 import { capabilities } from '../src/sources/claude-code/index.js';
 import { capabilities as codexCaps } from '../src/sources/codex/index.js';
-import { writeConfig, readConfig, DEFAULT_PORT, DEFAULT_HOST } from '../src/paths.js';
+import { writeConfig, readConfig, CONFIG_FILE, DEFAULT_PORT, DEFAULT_HOST } from '../src/paths.js';
 import * as installer from '../src/install.js';
 
 const c = {
@@ -117,7 +117,15 @@ async function cmdStart(flags) {
     throw err;
   }
 
-  writeConfig({ port, host, token, startedAt: Date.now(), pid: process.pid });
+  // Convenience state only (`status`'s "last served on" line, and the
+  // optional hook reporter's token lookup) — never worth taking a running
+  // server down for. A read-only home (e.g. systemd's ProtectSystem=strict
+  // without AGENT_CCTV_HOME redirected) must not crash-loop the process.
+  try {
+    writeConfig({ port, host, token, startedAt: Date.now(), pid: process.pid });
+  } catch (err) {
+    console.error(c.dim(`  could not write ${CONFIG_FILE} (${err.message}) — continuing without it`));
+  }
 
   const local = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/`;
   const url = (cfg.publicUrlRaw || local) + (token ? `?token=${token}` : '');

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -78,4 +78,70 @@ test('a well-formed --host value is not mistaken for a missing one', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /--no-token cannot be combined/);
   assert.doesNotMatch(r.stderr, /requires a value/);
+});
+
+/** Polls `predicate` until it's true or `timeoutMs` elapses. */
+function waitFor(predicate, timeoutMs) {
+  return new Promise((resolvePromise, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    const tick = () => {
+      if (predicate()) return resolvePromise();
+      if (Date.now() > deadline) return reject(new Error('timed out waiting for condition'));
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+
+test('an unwritable AGENT_CCTV_HOME (e.g. systemd ProtectSystem=strict without the state dir redirected) does not crash the server', async () => {
+  const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-claude-'));
+  fs.mkdirSync(path.join(claudeDir, 'projects'), { recursive: true });
+
+  // A directory whose PARENT is a regular file makes any mkdir/write under it
+  // fail with ENOTDIR, reliably and without root — the same shape of failure
+  // ProtectSystem=strict produces by making the home directory read-only.
+  const blockerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-blocker-'));
+  const blockerFile = path.join(blockerDir, 'not-a-directory');
+  fs.writeFileSync(blockerFile, '');
+  const home = path.join(blockerFile, 'agent-cctv-home');
+
+  const port = 20000 + (process.pid % 10000);
+  const env = { ...process.env, AGENT_CCTV_HOME: home, AGENT_CCTV_CLAUDE_DIR: claudeDir };
+  delete env.AGENT_CCTV_TOKEN;
+  delete env.AGENT_CCTV_HOST;
+  delete env.AGENT_CCTV_PORT;
+  delete env.AGENT_CCTV_PUBLIC_URL;
+
+  const child = spawn(process.execPath, [CLI, 'start', '--port', String(port), '--no-open'], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d) => (stdout += d));
+  child.stderr.on('data', (d) => (stderr += d));
+
+  try {
+    // "watching" is only printed after the socket is bound and the (now
+    // non-fatal) writeConfig() call has run — proof the process survived it.
+    await waitFor(() => /watching/.test(stdout) || child.exitCode !== null, 5000);
+    assert.equal(
+      child.exitCode,
+      null,
+      `process exited early instead of serving (code ${child.exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`
+    );
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+
+    // The failure was reported, not silently swallowed.
+    assert.match(stderr, /could not write/);
+    assert.match(stderr, /ENOTDIR/);
+  } finally {
+    child.kill();
+    fs.rmSync(claudeDir, { recursive: true, force: true });
+    fs.rmSync(blockerDir, { recursive: true, force: true });
+  }
 });

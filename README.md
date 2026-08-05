@@ -265,6 +265,15 @@ record, and on this topology they are on the same disk.
   file and cannot authenticate. Hooks are optional; this only matters if you
   install them.
 
+  The shipped systemd unit sharpens this: `ProtectSystem=strict` makes the
+  account's home read-only, so the unit redirects state with
+  `AGENT_CCTV_HOME=/var/lib/agent-cctv` (see `deploy/agent-cctv.service`).
+  Hooks running from the agents' own shell still default to
+  `~/.agent-cctv/config.json`, so under this unit they will not find the token
+  there unless you also export `AGENT_CCTV_HOME=/var/lib/agent-cctv` for the
+  agents' shell. This is a documented limitation of the systemd deployment,
+  not a blocker — hooks are opt-in, and everything else works without them.
+
 ## Codex, and what a second agent costs
 
 Codex CLI sessions appear on the same wall, from `~/.codex/sessions/`. They give
