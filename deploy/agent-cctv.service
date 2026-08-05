@@ -1,15 +1,24 @@
 [Unit]
 Description=agent-cctv — live wall of coding agent sessions
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
-# Run as the account the agents run as, or one sharing its group.
+# Run as the same account the agents run as — agent-cctv reads the agents'
+# state from that account's home directory (see src/paths.js), so a different
+# account, even one sharing its group, looks in the wrong home entirely and
+# finds nothing.
 # Never root: this process serves file contents over HTTP.
 User=agents
 Group=agents
 EnvironmentFile=/etc/agent-cctv/agent-cctv.env
-ExecStart=/usr/bin/npx --yes agent-cctv start --no-open
+# Install first: npm i -g agent-cctv@<version> — pin the version, the same way
+# the README tells you to pin Claude Code. `npx --yes` would fetch an unpinned
+# package from the registry on every restart, and under ProtectHome=read-only
+# below it also fails outright: npx needs to write $HOME/.npm, which is
+# read-only here, so the unit would crash-loop before agent-cctv ever runs.
+ExecStart=/usr/bin/agent-cctv start --no-open
 Restart=on-failure
 RestartSec=5
 

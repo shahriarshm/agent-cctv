@@ -199,6 +199,18 @@ agent-cctv works on a shared server — a CI box, a cloud dev machine, an agent
 fleet — as long as the agents run on that same machine. There is no separate
 mode: it is two environment variables and a systemd unit.
 
+Install it globally and pin the version, the same way you'd pin Claude Code:
+
+```sh
+npm i -g agent-cctv@<version>
+```
+
+`npx agent-cctv`, the quick-start above, is fine for trying it on your own
+machine — it fetches on demand. The shipped systemd unit does not use it: a
+long-running service that re-fetches an unpinned package from the registry on
+every restart is not something you want on a server, so it invokes the
+installed `agent-cctv` binary directly.
+
 ```sh
 AGENT_CCTV_TOKEN=$(openssl rand -hex 32)
 AGENT_CCTV_PUBLIC_URL=https://cctv.corp.example
@@ -247,8 +259,10 @@ record, and on this topology they are on the same disk.
 ### Operating it
 
 - **Never run it as root.** It serves file contents over HTTP. Run it as the
-  account the agents use, or one sharing that group. Liveness checks work fine
-  unprivileged.
+  same account the agents use — `CLAUDE_DIR` resolves from that account's own
+  home directory, so a different account, even one sharing its group, looks in
+  the wrong home entirely and finds nothing. Liveness checks work fine
+  unprivileged. Multi-user roots are a later release.
 - **Pin your Claude Code version, and alert on degradation.** The internals it
   reads are undocumented. `GET /api/health` needs no token and returns
   `capabilities`; alert on `capabilities['claude-code'].registry === false`,
