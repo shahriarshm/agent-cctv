@@ -177,3 +177,73 @@ function splitInline(s, no) {
   if (cur.trim()) out.push(cur.trim());
   return out;
 }
+
+/**
+ * The same subset, written back out.
+ *
+ * Round-tripping is a test rather than an aspiration: everything this emits,
+ * parseYaml() reads, and the pair is checked against each other. Quoting is
+ * deliberately eager — a string is bare only when it cannot be mistaken for
+ * anything else — because the failure it prevents is silent. A glob starting
+ * with a star, written bare, reads back as a YAML alias; the parser is right to
+ * refuse it, and better never to write it in the first place.
+ */
+export function stringifyYaml(value, indent = 0) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('the top level of a document must be a map');
+  }
+  const pad = ' '.repeat(indent);
+  let out = '';
+  for (const [key, v] of Object.entries(value)) {
+    if (v === undefined) continue;
+    if (Array.isArray(v)) {
+      out += `${pad}${key}: ${inlineList(v)}\n`;
+    } else if (v && typeof v === 'object') {
+      // `key:` with nothing under it is exactly what the parser refuses, and
+      // the subset has no inline `{}` to fall back on. Callers drop empty maps
+      // before they get here — writeView()'s strip() does — so this is a bug
+      // rather than a case to paper over.
+      if (!Object.keys(v).length) {
+        throw new TypeError(`"${key}" is an empty map, which this subset cannot write`);
+      }
+      out += `${pad}${key}:\n${stringifyYaml(v, indent + 2)}`;
+    } else {
+      out += `${pad}${key}: ${scalarText(v)}\n`;
+    }
+  }
+  return out;
+}
+
+function inlineList(items) {
+  return `[${items.map((v) => {
+    if (v && typeof v === 'object') {
+      throw new TypeError('a list may only hold scalars in this subset');
+    }
+    return scalarText(v);
+  }).join(', ')}]`;
+}
+
+function scalarText(v) {
+  if (typeof v === 'boolean') return String(v);
+  if (typeof v === 'number') {
+    if (!Number.isInteger(v)) throw new TypeError('only whole numbers can be written');
+    return String(v);
+  }
+  if (v === null) return 'null';
+  if (typeof v !== 'string') throw new TypeError(`cannot write a ${typeof v}`);
+  if (!needsQuote(v)) return v;
+  return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** Bare only when it cannot be mistaken for anything else. */
+function needsQuote(s) {
+  return (
+    s === '' ||
+    s !== s.trim() ||
+    /^[*&!|>%@`#-]/.test(s) ||
+    /[:#]/.test(s) ||
+    /^(true|false|null|~)$/.test(s) ||
+    /^-?\d+$/.test(s) ||
+    /^[[{]/.test(s)
+  );
+}
