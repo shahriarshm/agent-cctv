@@ -28,11 +28,25 @@ export function isLoopback(host) {
  * two environment variables, not a second code path.
  */
 export function resolve({ flags = {}, env = process.env, file = readConfig(), makeToken = newToken } = {}) {
-  const port = Number(flags.port) || Number(env.AGENT_CCTV_PORT) || Number(file.port) || DEFAULT_PORT;
-  const host = flags.host || env.AGENT_CCTV_HOST || file.host || DEFAULT_HOST;
+  // `file` (~/.agent-cctv/config.json) is deliberately NOT consulted for host
+  // or port. It is a runtime echo written by cmdStart on every successful
+  // start — src/hook.js reads it back to know where to POST — not
+  // operator-authored configuration. Feeding it into this precedence chain
+  // would make one `--host 0.0.0.0`, ever, stick forever: writeConfig()
+  // persists whatever this run resolved to, and the next flagless run would
+  // read that back out as if someone had configured it. `file` stays a
+  // parameter (rather than being dropped) so callers — and the regression
+  // test in test/config.test.js — can prove it has no effect here.
+  const port = Number(flags.port) || Number(env.AGENT_CCTV_PORT) || DEFAULT_PORT;
+  const host = flags.host || env.AGENT_CCTV_HOST || DEFAULT_HOST;
 
   const noToken = flags['no-token'] === true || flags.token === false;
   const token = noToken ? null : env.AGENT_CCTV_TOKEN || makeToken();
+  // Whether the operator already has this token (from AGENT_CCTV_TOKEN) or it
+  // was just minted for them — the CLI banner treats those differently (a
+  // minted token has to be shown; a configured one shouldn't be echoed to a
+  // log every restart).
+  const tokenFromEnv = !noToken && !!env.AGENT_CCTV_TOKEN;
 
   const publicUrlRaw = flags['public-url'] || env.AGENT_CCTV_PUBLIC_URL || null;
   let publicHost = null;
@@ -54,6 +68,7 @@ export function resolve({ flags = {}, env = process.env, file = readConfig(), ma
     host,
     token,
     noToken,
+    tokenFromEnv,
     publicUrlRaw,
     publicHost,
     secureCookie,

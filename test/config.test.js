@@ -23,11 +23,25 @@ test('defaults reproduce the current single-developer behaviour', () => {
   assert.deepEqual(cfg.allowedHosts, ['localhost', '127.0.0.1', '::1']);
 });
 
-test('precedence runs flags over env over file over defaults', () => {
+test('precedence runs flags over env over defaults — the file layer never wins', () => {
+  // `file` used to sit between env and DEFAULT_PORT; it no longer
+  // participates at all (see the regression test below), so a `file.port`
+  // with nothing overriding it must fall through to the default, not win.
   assert.equal(bare({ flags: { port: '1' }, env: { AGENT_CCTV_PORT: '2' }, file: { port: 3 } }).port, 1);
   assert.equal(bare({ env: { AGENT_CCTV_PORT: '2' }, file: { port: 3 } }).port, 2);
-  assert.equal(bare({ file: { port: 3 } }).port, 3);
+  assert.equal(bare({ file: { port: 3 } }).port, 4599);
   assert.equal(bare().port, 4599);
+});
+
+test('the state file never feeds host or port back into resolve()', () => {
+  // ~/.agent-cctv/config.json is a runtime echo cmdStart writes on every
+  // start (for the hook reporter) — not operator configuration. If it were
+  // consulted here, one `--host 0.0.0.0`, ever, would stick forever: the
+  // write side persists whatever a run resolved to, and the next flagless
+  // run would read that back out as if it had been configured.
+  const cfg = bare({ file: { host: '0.0.0.0', port: 9999 } });
+  assert.equal(cfg.host, '127.0.0.1');
+  assert.equal(cfg.port, 4599);
 });
 
 test('AGENT_CCTV_TOKEN is used instead of minting a random one', () => {
