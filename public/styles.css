@@ -1587,3 +1587,88 @@ body[data-stale='true'] .archive {
     min-width: 260px;
   }
 }
+
+/* ── saving a view ───────────────────────────────────────────────────────── */
+
+.save-scrim {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  z-index: 40;
+}
+
+.save-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 41;
+  width: min(420px, calc(100vw - 32px));
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 45%);
+}
+
+.save-dialog h2 {
+  margin: 0;
+  font-size: var(--t-body);
+  letter-spacing: 0.02em;
+}
+
+.save-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  font-size: var(--t-eyebrow);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.save-field input {
+  background: var(--panel-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-body);
+  letter-spacing: normal;
+  text-transform: none;
+  padding: var(--s2);
+}
+
+.save-field input:focus {
+  outline: none;
+  border-color: var(--ink-3);
+}
+
+/* What the file will actually contain. A save that quietly captured something
+   else is the one failure a dialog like this can have. */
+.save-captures {
+  margin: 0;
+  font-size: var(--t-meta);
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.save-error {
+  margin: 0;
+  font-size: var(--t-meta);
+  color: var(--ember-ink);
+}
+
+.save-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+}
+
+.save-go {
+  border-color: var(--ink-3);
+  color: var(--ink);
+}

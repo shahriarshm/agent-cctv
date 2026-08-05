@@ -148,6 +148,30 @@
 
     <div class="scrim" id="scrim" data-open="false"></div>
 
+    <!-- Saving writes a view file. It is the only thing in this dashboard that
+         writes anything, and it only ever runs from this button. -->
+    <div class="save-scrim" id="save-scrim" hidden></div>
+    <div
+      class="save-dialog"
+      id="save-dialog"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="save-title"
+    >
+      <h2 id="save-title">Save this view</h2>
+      <label class="save-field">
+        <span>Name</span>
+        <input id="save-name" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="save-captures" id="save-captures"></p>
+      <p class="save-error" id="save-error" hidden role="alert"></p>
+      <div class="save-actions">
+        <button class="chip" id="save-cancel" type="button">Cancel</button>
+        <button class="chip save-go" id="save-go" type="button">Save</button>
+      </div>
+    </div>
+
     <aside
       class="inspector"
       id="inspector"

@@ -55,7 +55,7 @@ const titleEl = document.getElementById('inspector-title');
 
 import { sourceMeta } from './icons.js';
 import { shouldNotify, describe as describeAlert } from './notify.js';
-import { mountViews, setViews, inView, currentView, wantedViewId } from './views.js';
+import { mountViews, setViews, inView, currentView, wantedViewId, wireSave } from './views.js';
 import { el, shortPath, plain, since, clockTime, tokens } from './format.js';
 import { createTimeline } from './timeline.js';
 import { createFocus, createTail } from './modes.js';
@@ -1219,6 +1219,51 @@ function applyView(view, { seedGroup = true } = {}) {
   paintStats();
 }
 
+/**
+ * What Save writes: the current view's own match, with the header's narrowing
+ * laid over it.
+ *
+ * The composition is the point. A hand-written view with `project: [web-*, api]`
+ * and an `exclude:` block, narrowed in the header to one project and saved,
+ * keeps its exclusion — nothing a person typed is dropped on the floor. What
+ * cannot survive is anything the header cannot say: the globs and lists come
+ * from the base view or from editing the file afterwards.
+ */
+const SAVED_STATE = { live: 'live', busy: 'busy', attention: 'attention' };
+
+function composeView() {
+  const base = currentView().match || {};
+  const match = { ...base };
+  if (base.exclude) match.exclude = { ...base.exclude };
+
+  const state = SAVED_STATE[filters.state];
+  if (state) match.state = state;
+  else delete match.state;
+
+  if (filters.source !== 'all') match.agent = filters.source;
+  if (filters.project !== 'all') match.project = filters.project;
+
+  const body = { match };
+  if (filters.groupBy && filters.groupBy !== 'none') body.groupBy = filters.groupBy;
+  if (filters.mode && filters.mode !== 'wall') body.mode = filters.mode;
+  return body;
+}
+
+async function postView(payload) {
+  try {
+    const res = await fetch(api('/api/views'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, id: data.id, error: data.error };
+  } catch (err) {
+    return { ok: false, status: 0, error: 'Could not reach the dashboard.' };
+  }
+}
+
 async function loadViewCatalog() {
   try {
     const res = await fetch(api('/api/views'), { credentials: 'same-origin' });
@@ -1229,6 +1274,7 @@ async function loadViewCatalog() {
 
 setMode(filters.mode);
 
+wireSave({ composeView, postView });
 mountViews({ initialId: viewParam || filters.view, onSelect: applyView });
 
 layout();
