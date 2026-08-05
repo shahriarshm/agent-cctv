@@ -57,6 +57,74 @@ need you. Groups are ordered by their most urgent member, so the section
 holding a blocked session is always the one at the top. Tiles are moved rather
 than rebuilt, so their activity strips keep their history across a regroup.
 
+### Views
+
+The three selects are enough for one machine and not enough for a wall you keep
+open. A **view** is a named population of sessions, written as a file in
+`~/.agent-cctv/views/`. Its id is its filename; `.yaml`, `.yml` and `.json` all
+load.
+
+```yaml
+# ~/.agent-cctv/views/frontend.yaml
+name: Frontend work        # label in the picker; defaults to the filename
+order: 20                  # optional picker order; default 100, ties break by name
+groupBy: branch            # seeds the group-by select; still changeable by hand
+
+match:                     # the population — everything this view puts on the wall
+  project: [web-*, design-system]
+  branch: "feat/*"
+  agent: claude-code
+  exclude:
+    cwd: "*/scratch/*"
+```
+
+You can match on `agent`, `project`, `cwd`, `branch`, `model`, `name` and
+`state`. A list of values is OR and separate fields are AND, so the view above is
+*those two projects, on a feature branch, run by Claude Code*. Patterns are globs
+— `*` for any run, `?` for one — matched case-insensitively against the whole
+string, so `web-*` matches `web-app` but not `my-web-app`, and matching part of a
+path needs its own stars. `exclude` takes the same fields and wins over
+everything. A session that doesn't carry the field at all never matches a pattern
+on it: `branch: "feat/*"` leaves out a session with no branch rather than
+treating absence as a wildcard. `state` is the one field that isn't a glob —
+it takes `busy`, `waiting`, `idle`, `ended`, or the two the header already thinks
+in, `live` and `attention`.
+
+**The view is the population; the header narrows within it.** The four counts and
+the agent and project selects all recount against the view, so the figure on a
+button is still exactly what clicking it leaves on the wall.
+
+Alerts follow the view — in a Frontend view you are not interrupted for a backend
+session going blocked. They follow the *view*, though, not the state filter:
+sitting on "working" still tells you when a session leaves it for blocked, which
+is the only thing the alert exists for. History deliberately does not follow the
+view. The archive is where you go to find a session you remember, and hiding two
+thirds of it because of a dropdown three feet away is a trap.
+
+Views are read and never written. There is no editor and no save button, so a
+view file is always exactly what you put there — `agent-cctv views` prints what
+loaded, where it looked, and anything that failed to parse. Edit a file and the
+wall picks it up on save; a file that doesn't parse is named, with its line, and
+the other views carry on without it.
+
+The YAML is a deliberately small subset — comments, `key: value`, quoted strings,
+lists and nested maps — and it refuses anything else by line number rather than
+guessing. agent-cctv has no dependencies, so this is a parser we own, and one
+that quietly misreads `branch: "feat/*" # temporary` would put the wrong sessions
+on the wall while looking entirely confident. (One consequence worth knowing:
+`cwd: */scratch/*` is a YAML alias, so globs that start with `*` need quoting.
+The parser tells you so.)
+
+`AGENT_CCTV_VIEWS_DIR` moves the directory. On the team deployment below it
+follows `AGENT_CCTV_HOME` to `/var/lib/agent-cctv/views`, where one set of views
+is shared by everyone on the box — which is the right default there, since a view
+is a file you can commit and hand to the person next to you. Which view *you* are
+on is per-browser and is never written to disk, so two people watching the same
+wall sit on different ones. `?view=frontend` opens straight into one, which is
+what a kiosk screen needs.
+
+With no view files, none of this appears — the header is exactly what it was.
+
 ### History
 
 **History** in the header opens the archive: every session that has already left
@@ -142,6 +210,7 @@ code than a dashboard behind loopback and a token.
 ```
 agent-cctv                Start the dashboard
 agent-cctv status         List live sessions in the terminal
+agent-cctv views          List the view presets it can see
 agent-cctv doctor         Check what it can read on this machine
 agent-cctv install        Optional: add Claude Code hooks
 agent-cctv uninstall      Remove those hooks
