@@ -32,17 +32,22 @@ const MIME = {
  * DNS-rebound hostname resolves there too. We check Host and Origin, and require
  * a per-run token for anything that returns session data.
  */
-function hostAllowed(req) {
-  const host = (req.headers.host || '').split(':')[0].toLowerCase().replace(/^\[|\]$/g, '');
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+/** `example.com:4599` and `[::1]:4599` both reduce to a bare hostname. */
+function hostname(value) {
+  const h = String(value || '').trim().toLowerCase();
+  if (h.startsWith('[')) return h.slice(1, h.indexOf(']')); // [::1]:4599
+  return h.split(':')[0];
 }
 
-function originAllowed(req) {
+function hostAllowed(req, allowed) {
+  return allowed.has(hostname(req.headers.host));
+}
+
+function originAllowed(req, allowed) {
   const origin = req.headers.origin;
   if (!origin) return true; // same-origin navigations and curl send none
   try {
-    const h = new URL(origin).hostname;
-    return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+    return allowed.has(hostname(new URL(origin).hostname));
   } catch {
     return false;
   }
@@ -74,7 +79,19 @@ function readBody(req, limit = 8 * 1024 * 1024) {
   });
 }
 
-export function createServer({ store = new Store(), token = null, withSource = true } = {}) {
+export function createServer({
+  store = new Store(),
+  token = null,
+  withSource = true,
+  allowedHosts = ['localhost', '127.0.0.1', '::1'],
+} = {}) {
+  // Do NOT run these through hostname(): that function strips a :port, and a
+  // bare '::1' would reduce to '' — silently dropping loopback from its own
+  // allowlist. Allowlist entries are already bare hostnames.
+  const allowed = new Set(
+    allowedHosts.map((h) => String(h).trim().toLowerCase().replace(/^\[|\]$/g, ''))
+  );
+
   /** @type {Set<import('node:http').ServerResponse>} */
   const clients = new Set();
 
@@ -110,8 +127,8 @@ export function createServer({ store = new Store(), token = null, withSource = t
   }
 
   const server = http.createServer(async (req, res) => {
-    if (!hostAllowed(req)) return json(res, 403, { error: 'bad host' });
-    if (!originAllowed(req)) return json(res, 403, { error: 'bad origin' });
+    if (!hostAllowed(req, allowed)) return json(res, 403, { error: 'bad host' });
+    if (!originAllowed(req, allowed)) return json(res, 403, { error: 'bad origin' });
 
     const url = new URL(req.url, 'http://localhost');
     const route = url.pathname;
@@ -266,9 +283,9 @@ function drainSpool(store) {
 
 export { newToken } from './config.js';
 
-export function start({ port = DEFAULT_PORT, host = DEFAULT_HOST, store, token } = {}) {
+export function start({ port = DEFAULT_PORT, host = DEFAULT_HOST, store, token, allowedHosts } = {}) {
   return new Promise((resolve, reject) => {
-    const server = createServer({ store, token });
+    const server = createServer({ store, token, allowedHosts });
     server.once('error', reject);
     server.listen(port, host, () => resolve(server));
   });
