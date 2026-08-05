@@ -288,3 +288,51 @@ test(
     }
   }
 );
+
+/* ── views ───────────────────────────────────────────────────────────────── */
+
+/** Runs a non-start subcommand against a throwaway views directory. */
+function runViews(files) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-home-'));
+  const views = path.join(home, 'views');
+  if (files) {
+    fs.mkdirSync(views, { recursive: true });
+    for (const [name, body] of Object.entries(files)) {
+      fs.writeFileSync(path.join(views, name), body);
+    }
+  }
+  try {
+    const env = { ...process.env, AGENT_CCTV_HOME: home };
+    delete env.AGENT_CCTV_VIEWS_DIR;
+    return spawnSync(process.execPath, [CLI, 'views'], { encoding: 'utf8', env, timeout: 10_000 });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('views names the directory it looked in and offers a starter when empty', () => {
+  const r = runViews(null);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /views/);
+  assert.match(r.stdout, /state: attention/, 'an empty directory should print something to paste');
+});
+
+test('views lists what loaded, with its match', () => {
+  const r = runViews({ 'needs-me.yaml': 'name: Needs me\nmatch:\n  state: attention\n' });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /Needs me/);
+  assert.match(r.stdout, /needs-me/);
+  assert.match(r.stdout, /state attention/);
+});
+
+test('views reports a broken file with its line, and still exits 0', () => {
+  const r = runViews({
+    'good.yaml': 'name: Good\n',
+    'bad.yaml': 'name: Bad\ngroupby: project\n',
+  });
+  assert.equal(r.status, 0, 'a broken view file is not a broken install');
+  assert.match(r.stdout, /Good/);
+  assert.match(r.stdout, /bad\.yaml/);
+  assert.match(r.stdout, /:2/);
+  assert.match(r.stdout, /unknown key "groupby"/);
+});

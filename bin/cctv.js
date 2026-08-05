@@ -8,6 +8,7 @@ import { capabilities } from '../src/sources/claude-code/index.js';
 import { capabilities as codexCaps } from '../src/sources/codex/index.js';
 import { writeConfig, readConfig, CONFIG_FILE, DEFAULT_PORT, DEFAULT_HOST } from '../src/paths.js';
 import * as installer from '../src/install.js';
+import { loadViews } from '../src/views.js';
 
 const c = {
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
@@ -52,6 +53,7 @@ ${c.bold('agent-cctv')} — a live wall of what your coding agents are doing
 ${c.bold('Usage')}
   agent-cctv [start]        Start the dashboard  ${c.dim('(default)')}
   agent-cctv status         What it can see, from the terminal
+  agent-cctv views          List the view presets it can see
   agent-cctv install        Optional: add Claude Code hooks for instant events
   agent-cctv uninstall      Remove those hooks
   agent-cctv doctor         Check what agent-cctv can read on this machine
@@ -71,6 +73,7 @@ ${c.bold('Environment')}
   AGENT_CCTV_PUBLIC_URL  Public URL when behind a reverse proxy
   AGENT_CCTV_HOST        Bind address
   AGENT_CCTV_PORT        Port
+  AGENT_CCTV_VIEWS_DIR   Where view presets are read from ${c.dim('(default ~/.agent-cctv/views)')}
 `;
 
 function openBrowser(url) {
@@ -283,6 +286,17 @@ function cmdDoctor() {
       hooks.installed.length ? hooks.installed.join(', ') : 'not installed (optional)'
     )}`
   );
+  const views = loadViews();
+  console.log(
+    `  ${views.errors.length ? c.red('✗') : views.views.length ? c.green('✓') : c.dim('–')} ` +
+      `${'~/.agent-cctv/views'.padEnd(22)} ${c.dim(
+        views.errors.length
+          ? `${views.views.length} view(s), ${views.errors.length} failed — run: agent-cctv views`
+          : views.views.length
+            ? `${views.views.length} view(s)`
+            : 'no view presets (optional)'
+      )}`
+  );
   console.log('');
   if (!caps.registry) {
     console.log(
@@ -292,6 +306,56 @@ function cmdDoctor() {
     console.log(c.yellow('  but "waiting for permission" will be less accurate.'));
     console.log('');
   }
+}
+
+/** Printed when the directory is empty — the whole feature in five lines. */
+const STARTER = `name: Needs me
+order: 10
+match:
+  state: attention
+`;
+
+/**
+ * What loaded, where it looked, and what broke.
+ *
+ * This is the whole discoverability story for a feature that writes nothing:
+ * agent-cctv never creates a view file, so the terminal has to be the thing
+ * that says where they go and what one looks like.
+ */
+function cmdViews() {
+  const { dir, views, errors } = loadViews();
+  const home = (p) => p.replace(process.env.HOME, '~');
+  console.log('');
+  console.log(`  ${c.bold('views')} ${c.dim('· ' + home(dir))}`);
+  console.log('');
+
+  for (const v of views) {
+    const bits = [];
+    for (const [field, value] of Object.entries(v.match || {})) {
+      if (field === 'exclude') continue;
+      bits.push(`${field} ${[].concat(value).join(' | ')}`);
+    }
+    if (v.match?.exclude) bits.push(`not ${Object.keys(v.match.exclude).join(', ')}`);
+    if (v.groupBy) bits.push(`grouped by ${v.groupBy}`);
+    console.log(`  ${c.green('●')} ${c.bold(v.name)} ${c.dim(`(${v.id})`)}`);
+    console.log(`    ${c.dim(bits.join('  ·  ') || 'everything')}`);
+  }
+
+  for (const e of errors) {
+    console.log(`  ${c.red('✗')} ${c.bold(e.file)}${e.line ? c.dim(':' + e.line) : ''}`);
+    console.log(`    ${c.red(e.message)}`);
+  }
+
+  if (!views.length && !errors.length) {
+    console.log(c.dim('  No views yet. A view is a file; this one puts the blocked'));
+    console.log(c.dim('  sessions on the wall and nothing else:'));
+    console.log('');
+    console.log(c.dim(`    mkdir -p ${home(dir)}`));
+    console.log(c.dim(`    $EDITOR ${home(dir)}/needs-me.yaml`));
+    console.log('');
+    for (const line of STARTER.trimEnd().split('\n')) console.log(`    ${c.cyan(line)}`);
+  }
+  console.log('');
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -307,6 +371,8 @@ if (args.flags.help || args.flags.h || cmd === 'help') {
   cmdInstall(args.flags);
 } else if (cmd === 'uninstall') {
   cmdUninstall(args.flags);
+} else if (cmd === 'views') {
+  cmdViews();
 } else if (cmd === 'doctor') {
   cmdDoctor();
 } else {
