@@ -329,3 +329,23 @@ test('/api/views serves what the directory holds', async () => {
     await s.close();
   }
 });
+
+/* ── mode ────────────────────────────────────────────────────────────────── */
+
+test('a view can say how the wall is drawn', () => {
+  const { views, errors } = loadViews(viewsDir({ 'f.yaml': 'name: F\nmode: focus\n' }));
+  assert.deepEqual(errors, []);
+  assert.equal(views[0].mode, 'focus');
+});
+
+test('mode defaults to wall', () => {
+  const { views } = loadViews(viewsDir({ 'f.yaml': 'name: F\n' }));
+  assert.equal(views[0].mode, 'wall');
+});
+
+test('an unknown mode is refused with its line', () => {
+  const { views, errors } = loadViews(viewsDir({ 'f.yaml': 'name: F\nmode: sideways\n' }));
+  assert.deepEqual(views, []);
+  assert.equal(errors[0].line, 2);
+  assert.match(errors[0].message, /"mode" must be one of wall, focus, tail/);
+});

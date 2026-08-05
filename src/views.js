@@ -15,9 +15,11 @@ import { VIEWS_DIR } from './paths.js';
 import { parseYaml } from './yaml.js';
 import { FIELDS, STATES } from '../public/match.js';
 
-const TOP_KEYS = ['name', 'order', 'groupBy', 'match'];
+const TOP_KEYS = ['name', 'order', 'mode', 'groupBy', 'match'];
 /** Must stay in step with GROUPS in public/app.js. */
 const GROUP_BY = ['none', 'project', 'agent', 'state', 'branch'];
+/** How the wall is drawn. Must stay in step with MODES in public/app.js. */
+const MODES = ['wall', 'focus', 'tail'];
 const EXTENSIONS = new Set(['.yaml', '.yml', '.json']);
 const MATCH_FIELDS = [...Object.keys(FIELDS), 'state', 'exclude'];
 
@@ -106,10 +108,13 @@ function normalize(doc, id, lines) {
     fail(`"groupBy" must be one of ${GROUP_BY.join(', ')}`, 'groupBy');
   }
 
+  const mode = doc.mode === undefined ? 'wall' : doc.mode;
+  if (!MODES.includes(mode)) fail(`"mode" must be one of ${MODES.join(', ')}`, 'mode');
+
   const match = doc.match === undefined ? {} : doc.match;
   checkMatch(match, 'match', fail, false);
 
-  return { id, name: name.trim(), order, groupBy, match };
+  return { id, name: name.trim(), order, mode, groupBy, match };
 }
 
 function checkMatch(match, keyPath, fail, inExclude) {
