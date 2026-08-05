@@ -337,6 +337,7 @@ function cmdViews() {
     }
     if (v.match?.exclude) bits.push(`not ${Object.keys(v.match.exclude).join(', ')}`);
     if (v.groupBy) bits.push(`grouped by ${v.groupBy}`);
+    if (v.mode && v.mode !== 'wall') bits.push(`${v.mode} mode`);
     console.log(`  ${c.green('●')} ${c.bold(v.name)} ${c.dim(`(${v.id})`)}`);
     console.log(`    ${c.dim(bits.join('  ·  ') || 'everything')}`);
   }

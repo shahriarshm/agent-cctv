@@ -68,6 +68,7 @@ load.
 # ~/.agent-cctv/views/frontend.yaml
 name: Frontend work        # label in the picker; defaults to the filename
 order: 20                  # optional picker order; default 100, ties break by name
+mode: focus                # wall (default), focus, or tail
 groupBy: branch            # seeds the group-by select; still changeable by hand
 
 match:                     # the population — everything this view puts on the wall
@@ -101,11 +102,29 @@ is the only thing the alert exists for. History deliberately does not follow the
 view. The archive is where you go to find a session you remember, and hiding two
 thirds of it because of a dropdown three feet away is a trap.
 
-Views are read and never written. There is no editor and no save button, so a
-view file is always exactly what you put there — `agent-cctv views` prints what
-loaded, where it looked, and anything that failed to parse. Edit a file and the
-wall picks it up on save; a file that doesn't parse is named, with its line, and
-the other views carry on without it.
+You don't have to write that file by hand. Set the header the way you want it —
+filters, grouping, mode — then pick **＋ Save current as…** at the bottom of the
+view list, give it a name, and the dashboard writes the file for you. What comes
+out is an ordinary view file: hand-editable, diffable, indistinguishable from one
+you typed.
+
+Saving composes rather than replaces. Narrow a view that already has an
+`exclude:` block down to one project, save it, and the new view keeps the
+exclusion and adds the project. What it cannot keep is anything the header has no
+way to say — the globs and lists come from the file, so a view saved from the
+header holds exact values. That is the one lossy edge, and it is why the file
+stays the place the interesting matching lives.
+
+This is the only thing agent-cctv writes that you will read back, and it only
+happens when you click Save. It writes `<name>.yaml` into the views directory and
+can write nothing else: the name is reduced to a slug that has to match
+`[a-z0-9-]`, the resolved path is checked to be inside that directory, and the
+view is validated by the same code that loads one — a view that wouldn't load
+can't be written. An existing name asks before replacing.
+
+`agent-cctv views` prints what loaded, where it looked, and anything that failed
+to parse. Edit a file and the wall picks it up on save; a file that doesn't parse
+is named, with its line, and the other views carry on without it.
 
 The YAML is a deliberately small subset — comments, `key: value`, quoted strings,
 lists and nested maps — and it refuses anything else by line number rather than
@@ -123,7 +142,25 @@ on is per-browser and is never written to disk, so two people watching the same
 wall sit on different ones. `?view=frontend` opens straight into one, which is
 what a kiosk screen needs.
 
-With no view files, none of this appears — the header is exactly what it was.
+### Modes
+
+**Mode** in the header is how the wall is drawn, as opposed to which sessions are
+on it. A view can carry one, so switching to a view puts you in its mode.
+
+**wall** is the grid, and the default. **focus** is the spot monitor: one session
+takes the room with its live timeline underneath, and every other session sits in
+a rail beside it — still readable, still one click from being promoted. It starts
+on whatever is most urgent, so a blocked session puts itself in front of you, and
+if the session you were watching ends, focus moves rather than leaving you with a
+dead panel. Grouping means nothing here, so the group-by control goes away rather
+than sitting there doing nothing.
+
+**tail** is the whole room as one log: every event from every session in the view,
+newest at the top, each line saying which session it came from. It is `tail -f`
+for the wall — the mode for when you want to know that *something* is happening
+rather than what any one session is doing. It doesn't auto-scroll, for the same
+reason the inspector doesn't: a pane that jumps while you're reading it is worse
+than one you have to scroll yourself.
 
 ### History
 
