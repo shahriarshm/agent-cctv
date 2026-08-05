@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>agent-cctv</title>
+    <!--
+      Resolve the theme before the stylesheet lands, or every load flashes the
+      wrong one. This is also where "auto" is turned into a literal light/dark, so
+      styles.css never has to carry two copies of the palette.
+    -->
+    <script>
+      (function () {
+        var pref = 'auto';
+        try {
+          pref = (JSON.parse(localStorage.getItem('agent-cctv:view')) || {}).theme || 'auto';
+        } catch (e) {}
+        var dark = pref === 'auto' ? !matchMedia('(prefers-color-scheme: light)').matches : pref === 'dark';
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      })();
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='2' fill='%230c0d0f'/><rect x='2' y='3' width='12' height='2' rx='1' fill='%23ffab2e'/><circle cx='8' cy='10' r='2.5' fill='%23edeff2'/></svg>"
+    />
+  </head>
+  <body>
+    <header class="masthead" id="masthead" data-mode="wall">
+      <div class="zone">
+        <div class="wordmark">agent<span>·</span>cctv</div>
+      </div>
+
+      <!-- Counts and state filter are the same three concepts, so they are one
+           control: it reports the number and it is how you narrow to it. -->
+      <div class="zone">
+        <div class="readouts" role="group" aria-label="Filter by state">
+          <button class="readout" data-filter="all" data-kind="all" type="button" aria-pressed="true">
+            <b id="stat-all">0</b><span>all</span>
+          </button>
+          <button class="readout" data-filter="live" data-kind="live" type="button" aria-pressed="false">
+            <b id="stat-live">0</b><span>live</span>
+          </button>
+          <button class="readout" data-filter="busy" data-kind="busy" type="button" aria-pressed="false">
+            <b id="stat-busy">0</b><span>working</span>
+          </button>
+          <button
+            class="readout"
+            data-filter="attention"
+            data-kind="attention"
+            type="button"
+            aria-pressed="false"
+            data-hot="false"
+          >
+            <b id="stat-attention">0</b><span>need you</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="masthead-spacer"></div>
+
+      <div class="zone wall-only">
+        <label class="pick">
+          <span>agent</span>
+          <select id="pick-source"><option value="all">all</option></select>
+        </label>
+        <label class="pick">
+          <span>project</span>
+          <select id="pick-project"><option value="all">all</option></select>
+        </label>
+        <label class="pick">
+          <span>group by</span>
+          <select id="pick-group">
+            <option value="none">nothing</option>
+            <option value="project">project</option>
+            <option value="agent">agent</option>
+            <option value="state">state</option>
+            <option value="branch">branch</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="zone">
+        <button class="chip" id="archive-toggle" type="button" aria-pressed="false">History</button>
+        <button class="bell" id="bell" type="button" data-state="off" aria-pressed="false">
+          <span id="bell-label">Alerts</span>
+        </button>
+        <button class="theme" id="theme" type="button">
+          <span id="theme-icon"></span><span id="theme-label">Auto</span>
+        </button>
+      </div>
+
+      <div class="zone">
+        <div class="clock" id="clock">--:--:--</div>
+        <div class="link-state" id="link" data-up="false">connecting</div>
+      </div>
+    </header>
+
+    <p class="sr-only" id="announce" role="status" aria-live="polite"></p>
+
+    <main class="wall" id="wall"></main>
+
+    <section class="archive" id="archive" hidden aria-label="Past sessions">
+      <div class="archive-head">
+        <h2>Archive</h2>
+        <span class="archive-count" id="archive-count"></span>
+        <div class="archive-spacer"></div>
+        <label class="pick">
+          <span>going back</span>
+          <select id="archive-days">
+            <option value="1">a day</option>
+            <option value="7" selected>a week</option>
+            <option value="30">a month</option>
+            <option value="90">3 months</option>
+          </select>
+        </label>
+        <button class="chip" id="archive-close" type="button">Back to the wall</button>
+      </div>
+      <div class="archive-list" id="archive-list"></div>
+    </section>
+
+    <div class="scrim" id="scrim" data-open="false"></div>
+
+    <aside
+      class="inspector"
+      id="inspector"
+      data-open="false"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="inspector-title"
+    >
+      <div class="inspector-head">
+        <i class="agent-mark" id="inspector-mark"></i>
+        <h2 id="inspector-title">—</h2>
+        <button class="close" id="inspector-close" type="button">Close</button>
+      </div>
+      <dl class="inspector-meta" id="inspector-meta"></dl>
+      <div class="inspector-tasks" id="inspector-tasks" hidden></div>
+      <div class="timeline" id="timeline"></div>
+    </aside>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

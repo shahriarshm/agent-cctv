@@ -1,0 +1,32 @@
+{
+  "name": "agent-cctv",
+  "version": "0.1.0",
+  "description": "CCTV for coding agents — a live dashboard of what every agent on your machine is doing",
+  "type": "module",
+  "bin": {
+    "agent-cctv": "bin/cctv.js",
+    "cctv": "bin/cctv.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "public",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node bin/cctv.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "keywords": [
+    "claude-code",
+    "agents",
+    "dashboard",
+    "observability",
+    "hooks",
+    "cctv"
+  ],
+  "license": "MIT"
+}
