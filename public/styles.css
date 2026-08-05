@@ -275,6 +275,10 @@ body[data-locked='true'] {
   font-size: var(--t-eyebrow);
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  /* "need you" is the only two-word label here. Left to wrap it breaks the
+     baseline it shares with the other three counts and makes its button
+     taller than its neighbours. */
+  white-space: nowrap;
 }
 
 .readout:hover b,
@@ -315,6 +319,12 @@ body[data-locked='true'] {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-3);
+}
+
+/* Same reason as .readout span: "group by" wrapping drops its label off the
+   baseline shared with the single-word "agent" and "project" beside it. */
+.pick > span {
+  white-space: nowrap;
 }
 
 .pick select {
