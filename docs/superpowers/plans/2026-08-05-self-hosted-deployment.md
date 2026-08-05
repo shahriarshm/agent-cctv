@@ -1243,11 +1243,26 @@ This turns the source text `current.join('<NUL>')` into `current.join('\0')` —
 
 - [ ] **Step 3: Verify the file is text again and behaviour is unchanged**
 
-Run: `file public/app.js && grep -c "join('\\\\0')" public/app.js`
-Expected: `public/app.js: JavaScript text` (or `ASCII text`), and `2` — the two `join` calls on that line.
+Do **not** verify this with `grep`. A `grep` pattern for `\0` is interpreted by the regex
+engine, and the file you are checking is the one that was breaking `grep` in the first
+place. Count in JavaScript instead:
 
-Run: `node --check public/app.js 2>&1 || node -e "import('./public/app.js').catch(e => console.log('expected DOM error:', e.constructor.name))"`
-Expected: no syntax error. (`node --check` may reject ESM `import` in some versions; a DOM-related runtime error is fine and expected, a `SyntaxError` is not.)
+```bash
+node -e '
+const s = require("fs").readFileSync("public/app.js", "utf8");
+console.log("raw NUL bytes:      ", (s.match(/\u0000/g) || []).length);
+console.log("escaped separators: ", (s.match(/join\(.\\0.\)/g) || []).length);
+'
+```
+
+Expected: `raw NUL bytes: 0` and `escaped separators: 2` — the two `join` calls on line 982.
+
+Run: `file public/app.js`
+Expected: `JavaScript text` or `ASCII text` — no longer `data`.
+
+Run: `node --check public/app.js`
+Expected: exit 0, no output. (`package.json` sets `"type": "module"`, so `--check` parses it
+as ESM. Verified.)
 
 - [ ] **Step 4: Write the guard test**
 
@@ -1286,7 +1301,7 @@ function scripts() {
 
 test('no served script contains a NUL byte', () => {
   for (const [name, src] of scripts()) {
-    assert.ok(!src.includes(' '), `${name} contains a raw NUL byte; write it as \\0`);
+    assert.ok(!src.includes('\u0000'), `${name} contains a raw NUL byte; write it as \\0`);
   }
 });
 
