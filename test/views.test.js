@@ -98,3 +98,84 @@ for (const [label, src, line] of [
     assert.equal(err.line, line, `expected line ${line}, got: ${err.message}`);
   });
 }
+
+/* ── the matcher ─────────────────────────────────────────────────────────── */
+
+import { compile, glob } from '../public/match.js';
+
+/** A serialized session, as store.js serialize() produces it. */
+function session(over = {}) {
+  return {
+    id: 'x',
+    source: 'claude-code',
+    name: 'web-app',
+    project: 'web-app',
+    cwd: '/Users/me/code/web-app',
+    gitBranch: 'main',
+    model: 'claude-opus-5',
+    state: 'busy',
+    urgent: false,
+    ...over,
+  };
+}
+
+test('a glob is anchored and case-insensitive', () => {
+  assert.equal(glob('web-*')('web-app'), true);
+  assert.equal(glob('web-*')('WEB-APP'), true);
+  assert.equal(glob('web-*')('my-web-app'), false, 'must not match a prefix');
+  assert.equal(glob('*/scratch/*')('/Users/me/scratch/x'), true);
+  assert.equal(glob('a?c')('abc'), true);
+  assert.equal(glob('a?c')('ac'), false);
+});
+
+test('a glob does not let regex metacharacters through', () => {
+  assert.equal(glob('a.c')('abc'), false);
+  assert.equal(glob('a.c')('a.c'), true);
+  assert.equal(glob('a+')('aaa'), false);
+});
+
+test('an empty match takes everything', () => {
+  assert.equal(compile({})(session()), true);
+  assert.equal(compile(undefined)(session()), true);
+});
+
+test('a list is OR, separate fields are AND', () => {
+  const m = compile({ project: ['web-*', 'api'], branch: 'main' });
+  assert.equal(m(session()), true);
+  assert.equal(m(session({ project: 'api' })), true);
+  assert.equal(m(session({ project: 'docs' })), false);
+  assert.equal(m(session({ gitBranch: 'feat/x' })), false, 'fields must AND');
+});
+
+test('exclude beats include', () => {
+  const m = compile({ project: 'web-*', exclude: { cwd: '*/scratch/*' } });
+  assert.equal(m(session()), true);
+  assert.equal(m(session({ cwd: '/Users/me/scratch/web-app' })), false);
+});
+
+test('a session missing the field never matches it', () => {
+  const m = compile({ branch: 'feat/*' });
+  assert.equal(m(session({ gitBranch: null })), false);
+  assert.equal(m(session({ gitBranch: '' })), false);
+});
+
+test('a session missing the field is not excluded by an exclude on it', () => {
+  const m = compile({ exclude: { branch: 'feat/*' } });
+  assert.equal(m(session({ gitBranch: null })), true);
+});
+
+test('state matches the store states and the two aliases', () => {
+  assert.equal(compile({ state: 'busy' })(session({ state: 'busy' })), true);
+  assert.equal(compile({ state: 'busy' })(session({ state: 'idle' })), false);
+  assert.equal(compile({ state: 'live' })(session({ state: 'idle' })), true);
+  assert.equal(compile({ state: 'live' })(session({ state: 'ended' })), false);
+  assert.equal(compile({ state: 'attention' })(session({ state: 'waiting' })), true);
+  assert.equal(compile({ state: 'attention' })(session({ state: 'busy', urgent: true })), true);
+  assert.equal(compile({ state: 'attention' })(session({ state: 'idle' })), false);
+  assert.equal(compile({ state: ['busy', 'idle'] })(session({ state: 'idle' })), true);
+});
+
+test('agent matches the source id', () => {
+  assert.equal(compile({ agent: 'codex' })(session({ source: 'codex' })), true);
+  assert.equal(compile({ agent: 'codex' })(session()), false);
+});
