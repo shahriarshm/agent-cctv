@@ -71,16 +71,34 @@ export function validate(cfg) {
     );
   }
 
-  if (!isLoopback(cfg.host) && !cfg.token) {
+  // A configured public URL means "reachable beyond this machine" just as
+  // surely as a non-loopback bind does — a reverse proxy in front of a
+  // loopback bind is still exposing the dashboard to whoever can reach that
+  // proxy's hostname.
+  const remoteViaHost = !isLoopback(cfg.host);
+  const remoteViaPublicUrl = !!cfg.publicHost;
+  if ((remoteViaHost || remoteViaPublicUrl) && !cfg.token) {
+    if (cfg.noToken) {
+      throw new ConfigError(
+        remoteViaHost
+          ? `--no-token cannot be combined with --host ${cfg.host}.\n` +
+            `  The dashboard serves your transcripts, which contain source code.\n` +
+            `  Drop --no-token, or bind 127.0.0.1.`
+          : `--no-token cannot be combined with AGENT_CCTV_PUBLIC_URL (${cfg.publicUrlRaw}).\n` +
+            `  The dashboard serves your transcripts, which contain source code.\n` +
+            `  Drop --no-token, or remove AGENT_CCTV_PUBLIC_URL.`
+      );
+    }
     throw new ConfigError(
-      cfg.noToken
-        ? `--no-token cannot be combined with --host ${cfg.host}.\n` +
-          `  The dashboard serves your transcripts, which contain source code.\n` +
-          `  Drop --no-token, or bind 127.0.0.1.`
-        : `Refusing to bind ${cfg.host} without a token.\n` +
+      remoteViaHost
+        ? `Refusing to bind ${cfg.host} without a token.\n` +
           `  The dashboard serves your transcripts, which contain source code.\n` +
           `  Set AGENT_CCTV_TOKEN to a secret of at least ${MIN_TOKEN_LENGTH} characters,\n` +
           `  or bind 127.0.0.1 and put a reverse proxy in front.`
+        : `Refusing to run with AGENT_CCTV_PUBLIC_URL (${cfg.publicUrlRaw}) set and no token.\n` +
+          `  A public URL means a reverse proxy makes this reachable beyond this machine.\n` +
+          `  Set AGENT_CCTV_TOKEN to a secret of at least ${MIN_TOKEN_LENGTH} characters,\n` +
+          `  or remove AGENT_CCTV_PUBLIC_URL.`
     );
   }
 

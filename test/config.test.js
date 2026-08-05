@@ -126,3 +126,31 @@ test('a public bind with a strong token is accepted', () => {
     validate(bare({ flags: { host: '0.0.0.0' }, env: { AGENT_CCTV_TOKEN: GOOD } }))
   );
 });
+
+test('--no-token combined with a configured public URL is refused, and says so', () => {
+  // Loopback bind, but AGENT_CCTV_PUBLIC_URL means a reverse proxy makes this
+  // reachable beyond the machine — the same exposure a non-loopback bind has.
+  const cfg = bare({
+    flags: { 'no-token': true },
+    env: { AGENT_CCTV_PUBLIC_URL: 'https://cctv.corp.example' },
+  });
+  assert.throws(() => validate(cfg), (err) => {
+    assert.ok(err instanceof ConfigError);
+    assert.match(err.message, /--no-token/);
+    assert.match(err.message, /AGENT_CCTV_PUBLIC_URL|cctv\.corp\.example/);
+    return true;
+  });
+});
+
+test('a loopback bind with a public URL and a strong token is accepted', () => {
+  assert.doesNotThrow(() =>
+    validate(
+      bare({ env: { AGENT_CCTV_PUBLIC_URL: 'https://cctv.corp.example', AGENT_CCTV_TOKEN: GOOD } })
+    )
+  );
+});
+
+// The individual developer's escape hatch — loopback bind, no public URL,
+// --no-token — must not regress. Already covered above by
+// '--no-token on loopback is still allowed'; that test still passes
+// unmodified rather than being duplicated here.
