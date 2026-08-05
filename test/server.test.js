@@ -190,6 +190,22 @@ test('a query-string auth exchanges the token for a cookie', async () => {
   }
 });
 
+test('the session cookie carries a Max-Age, so it outlives a browser restart', async () => {
+  // Without it the cookie is session-only, but establishSession() has already
+  // scrubbed the token out of the address bar and history by the time it's
+  // set — so a restarted browser lands on a bare "/" with no way back in.
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url(`/api/state?token=${TOKEN}`));
+    const set = res.headers.get('set-cookie');
+    assert.match(set, /Max-Age=\d+/i);
+    const [, seconds] = set.match(/Max-Age=(\d+)/i);
+    assert.ok(Number(seconds) >= 29 * 24 * 60 * 60, `expected roughly 30 days, got ${seconds}s`);
+  } finally {
+    await s.close();
+  }
+});
+
 test('the cookie alone authorizes a later request', async () => {
   const s = await serve({ token: TOKEN });
   try {
@@ -206,6 +222,20 @@ test('a wrong cookie does not authorize', async () => {
   try {
     const res = await fetch(s.url('/api/state'), { headers: { cookie: 'cctv=nope' } });
     assert.equal(res.status, 401);
+  } finally {
+    await s.close();
+  }
+});
+
+test('a junk cctv= pair does not shadow a genuine one later in the header', async () => {
+  // Cookie header ordering across origins/domains is not guaranteed, so a
+  // sibling origin under a shared parent domain could plant its own `cctv=`
+  // pair ahead of the real one. Every candidate must be checked, not just the
+  // first with a matching name.
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url('/api/state'), { headers: { cookie: `cctv=junk; cctv=${TOKEN}` } });
+    assert.equal(res.status, 200);
   } finally {
     await s.close();
   }

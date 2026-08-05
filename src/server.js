@@ -27,6 +27,11 @@ const MIME = {
 };
 
 const COOKIE_NAME = 'cctv';
+/** 30 days. Without an explicit lifetime the cookie is session-only — but by
+ * the time it is set, establishSession() has already scrubbed the token out
+ * of the address bar and history, so a browser restart left a bookmarked `/`
+ * with no way back in. This keeps the credential outliving that restart. */
+const COOKIE_MAX_AGE_S = 30 * 24 * 60 * 60;
 
 /**
  * The dashboard streams source code out of transcripts, so loopback alone is not
@@ -133,20 +138,29 @@ export function createServer({
     return crypto.timingSafeEqual(A, B);
   }
 
-  function cookieToken(req) {
+  /**
+   * All `cctv=` values on the request, not just the first. A cookie header can
+   * legally carry more than one pair with the same name — e.g. a sibling
+   * origin under a shared parent domain (`Domain=corp.example; cctv=junk` on
+   * `cctv.corp.example`) — and their order is not guaranteed. Stopping at the
+   * first match would let a junk pair shadow the real one and lock the user
+   * out with no recovery, so every candidate is returned and checked.
+   */
+  function cookieTokens(req) {
     const raw = req.headers.cookie;
-    if (!raw) return null;
+    if (!raw) return [];
+    const values = [];
     for (const part of raw.split(';')) {
       const eq = part.indexOf('=');
       if (eq < 0) continue;
       if (part.slice(0, eq).trim() !== COOKIE_NAME) continue;
       try {
-        return decodeURIComponent(part.slice(eq + 1).trim());
+        values.push(decodeURIComponent(part.slice(eq + 1).trim()));
       } catch {
-        return null;
+        // Skip an unparseable pair rather than aborting the scan for the rest.
       }
     }
-    return null;
+    return values;
   }
 
   /** Which credential authenticated this request, or null. */
@@ -154,7 +168,7 @@ export function createServer({
     if (!token) return 'open';
     if (sameSecret(url.searchParams.get('token'), token)) return 'query';
     if (sameSecret(req.headers['x-cctv-token'], token)) return 'header';
-    if (sameSecret(cookieToken(req), token)) return 'cookie';
+    if (cookieTokens(req).some((v) => sameSecret(v, token))) return 'cookie';
     return null;
   }
 
@@ -176,7 +190,7 @@ export function createServer({
     if (credential === 'query' || credential === 'header') {
       res.setHeader(
         'set-cookie',
-        `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict` +
+        `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}` +
           (secureCookie ? '; Secure' : '')
       );
     }
@@ -326,8 +340,6 @@ function drainSpool(store) {
     return 0;
   }
 }
-
-export { newToken } from './config.js';
 
 export function start({ port = DEFAULT_PORT, host = DEFAULT_HOST, store, token, allowedHosts, secureCookie } = {}) {
   return new Promise((resolve, reject) => {
