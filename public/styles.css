@@ -215,6 +215,7 @@ body[data-locked='true'] {
 
 .zone {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s3);
 }
