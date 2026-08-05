@@ -215,3 +215,76 @@ test('--no-token before the subcommand disables the token rather than silently m
     fs.rmSync(claudeDir, { recursive: true, force: true });
   }
 });
+
+/* ── the browser must get the token even when the banner hides it ────────── */
+
+test(
+  'openBrowser() still gets the token when AGENT_CCTV_TOKEN hides it from the banner',
+  { skip: process.platform === 'win32' /* opener faking below assumes a shebang script on PATH */ },
+  async () => {
+    // Regression: the finding-8 fix (hide an env-sourced token from the
+    // printed banner) and the finding-5 fix (a page with no token shows "no
+    // credential") collided — cmdStart used to build one URL and hand it to
+    // both console.log and openBrowser(), so hiding the token from the banner
+    // also hid it from the browser tab this process opens for itself, which
+    // then landed on the "no credential" wall instead of a working dashboard.
+    //
+    // No real browser is spawned here: `open`/`xdg-open` is faked with a tiny
+    // script placed first on PATH that records its argv instead of opening
+    // anything.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-home-'));
+    const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-claude-'));
+    fs.mkdirSync(path.join(claudeDir, 'projects'), { recursive: true });
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-fakebin-'));
+    const recordFile = path.join(binDir, 'opened-url.txt');
+    const openerName = process.platform === 'darwin' ? 'open' : 'xdg-open';
+    fs.writeFileSync(
+      path.join(binDir, openerName),
+      `#!/bin/sh\nprintf '%s' "$1" > "${recordFile}"\n`,
+      { mode: 0o755 }
+    );
+
+    const token = 'e'.repeat(24);
+    const port = 23000 + (process.pid % 5000);
+    const env = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      AGENT_CCTV_HOME: home,
+      AGENT_CCTV_CLAUDE_DIR: claudeDir,
+      AGENT_CCTV_TOKEN: token,
+    };
+    delete env.AGENT_CCTV_HOST;
+    delete env.AGENT_CCTV_PORT;
+    delete env.AGENT_CCTV_PUBLIC_URL;
+
+    // Deliberately no --no-open: this is the "operator testing the server
+    // interactively" path the regression broke.
+    const child = spawn(process.execPath, [CLI, 'start', '--port', String(port)], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+
+    try {
+      await waitFor(() => /watching/.test(stdout) || child.exitCode !== null, 5000);
+      assert.equal(child.exitCode, null, `expected the server to be running; stderr: ${stderr}`);
+      await waitFor(() => fs.existsSync(recordFile), 2000);
+
+      const openedUrl = fs.readFileSync(recordFile, 'utf8');
+      assert.match(openedUrl, new RegExp(`token=${token}`), 'the opened tab must carry the token');
+
+      // The two URLs must differ: the banner hides an env-sourced token, the
+      // opened tab must not.
+      assert.doesNotMatch(stdout, new RegExp(`token=${token}`), 'the banner must not print an env-sourced token');
+      assert.match(stdout, /token from AGENT_CCTV_TOKEN/);
+    } finally {
+      child.kill();
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(claudeDir, { recursive: true, force: true });
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  }
+);

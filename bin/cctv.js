@@ -146,15 +146,19 @@ async function cmdStart(flags) {
   // "https://cctv.corp.example?token=…" is missing the "/" a browser inserts
   // silently but a person handing the link out sees as broken.
   const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
-  // A token that came from AGENT_CCTV_TOKEN is the operator's to distribute —
-  // printing it here just puts it in the systemd journal too, readable by
-  // more people than "whoever could ssh here". A freshly minted token has no
-  // other channel, so it still goes in the URL.
-  const showTokenInUrl = token && !cfg.tokenFromEnv;
-  const url = base + (showTokenInUrl ? `?token=${token}` : '');
+  // Two different URLs, on purpose. A token that came from AGENT_CCTV_TOKEN is
+  // the operator's to distribute — printing it in the banner just puts it in
+  // the systemd journal too, readable by more people than "whoever could ssh
+  // here". But the tab this process opens for *itself* is not a log: it still
+  // needs the token, or it lands on a bare "/" with no cookie yet and hits the
+  // "no credential" wall the SPA shows for a missing one. A freshly minted
+  // token has no other channel than the banner, so it still prints in full.
+  const tokenedUrl = base + (token ? `?token=${token}` : '');
+  const showTokenInBanner = token && !cfg.tokenFromEnv;
+  const bannerUrl = base + (showTokenInBanner ? `?token=${token}` : '');
   console.log('');
   console.log(`  ${c.bold('agent-cctv')} ${c.dim('watching')}`);
-  console.log(`  ${c.cyan(url)}`);
+  console.log(`  ${c.cyan(bannerUrl)}`);
   if (token && cfg.tokenFromEnv) {
     console.log(`  ${c.dim('token from AGENT_CCTV_TOKEN — share it out of band, not this URL')}`);
   }
@@ -177,7 +181,7 @@ async function cmdStart(flags) {
   console.log(c.dim('  ctrl-c to stop'));
   console.log('');
 
-  if (cfg.openBrowser) openBrowser(url);
+  if (cfg.openBrowser) openBrowser(tokenedUrl);
 
   const shutdown = () => {
     console.log(c.dim('\n  stopping…'));
