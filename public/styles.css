@@ -252,6 +252,7 @@ body[data-locked='true'] {
    only one allowed to shout, and only when it has something to shout about. */
 .readouts {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--edge);
