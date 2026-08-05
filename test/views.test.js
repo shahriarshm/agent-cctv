@@ -179,3 +179,110 @@ test('agent matches the source id', () => {
   assert.equal(compile({ agent: 'codex' })(session({ source: 'codex' })), true);
   assert.equal(compile({ agent: 'codex' })(session()), false);
 });
+
+/* ── loading ─────────────────────────────────────────────────────────────── */
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { loadViews } from '../src/views.js';
+
+function viewsDir(files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-views-'));
+  for (const [name, body] of Object.entries(files)) {
+    fs.writeFileSync(path.join(dir, name), body);
+  }
+  return dir;
+}
+
+test('a missing directory is no views and no error', () => {
+  const r = loadViews(path.join(os.tmpdir(), 'cctv-does-not-exist-' + process.pid));
+  assert.deepEqual(r.views, []);
+  assert.deepEqual(r.errors, []);
+});
+
+test('loads yaml and json, ignores everything else', () => {
+  const dir = viewsDir({
+    'frontend.yaml': 'name: Frontend\nmatch:\n  project: web-*\n',
+    'backend.yml': 'name: Backend\n',
+    'ops.json': '{"name": "Ops", "match": {"branch": "main"}}',
+    'notes.txt': 'ignored',
+    'README.md': 'ignored',
+  });
+  const { views, errors } = loadViews(dir);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(views.map((v) => v.id).sort(), ['backend', 'frontend', 'ops']);
+});
+
+test('the id is the filename and the name defaults to it', () => {
+  const { views } = loadViews(viewsDir({ 'needs-me.yaml': 'match:\n  state: attention\n' }));
+  assert.equal(views[0].id, 'needs-me');
+  assert.equal(views[0].name, 'needs-me');
+  assert.equal(views[0].order, 100);
+  assert.equal(views[0].groupBy, null);
+});
+
+test('views sort by order, then by name', () => {
+  const { views } = loadViews(
+    viewsDir({
+      'c.yaml': 'name: C\n',
+      'a.yaml': 'name: A\norder: 50\n',
+      'b.yaml': 'name: B\norder: 50\n',
+    })
+  );
+  assert.deepEqual(views.map((v) => v.name), ['A', 'B', 'C']);
+});
+
+test('one broken file does not stop the others, and is reported with its line', () => {
+  const dir = viewsDir({
+    'good.yaml': 'name: Good\n',
+    'bad.yaml': 'name: Bad\ngroupby: project\n',
+  });
+  const { views, errors } = loadViews(dir);
+  assert.deepEqual(views.map((v) => v.id), ['good']);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].file, 'bad.yaml');
+  assert.equal(errors[0].line, 2);
+  assert.match(errors[0].message, /unknown key "groupby"/);
+});
+
+test('two files claiming one id is an error naming both', () => {
+  const { errors } = loadViews(viewsDir({ 'x.yaml': 'name: A\n', 'x.json': '{"name":"B"}' }));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /duplicate view id "x"/);
+  assert.match(errors[0].message, /x\.json|x\.yaml/);
+});
+
+for (const [label, body, pattern] of [
+  ['an unknown match field', 'match:\n  repo: web\n', /unknown match field "repo"/],
+  ['an impossible state', 'match:\n  state: workingish\n', /is not a state/],
+  ['a bad groupBy', 'groupBy: repo\n', /"groupBy" must be one of/],
+  ['a non-integer order', 'order: high\n', /"order" must be a whole number/],
+  ['an empty name', 'name: ""\n', /"name" must be a non-empty string/],
+  ['a non-string pattern', 'match:\n  project: 12\n', /takes strings/],
+  ['a nested exclude', 'match:\n  exclude:\n    exclude:\n      cwd: /tmp\n', /cannot be nested/],
+]) {
+  test(`refuses ${label}`, () => {
+    const { views, errors } = loadViews(viewsDir({ 'v.yaml': body }));
+    assert.deepEqual(views, []);
+    assert.equal(errors.length, 1, `expected one error, got ${JSON.stringify(errors)}`);
+    assert.match(errors[0].message, pattern);
+  });
+}
+
+test('malformed json is reported, not thrown', () => {
+  const { views, errors } = loadViews(viewsDir({ 'v.json': '{"name": ' }));
+  assert.deepEqual(views, []);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].file, 'v.json');
+});
+
+test('a loaded view compiles into a working predicate', () => {
+  const { views } = loadViews(
+    viewsDir({ 'f.yaml': 'match:\n  project: [web-*, api]\n  exclude:\n    branch: wip/*\n' })
+  );
+  const m = compile(views[0].match);
+  assert.equal(m(session({ project: 'web-app' })), true);
+  assert.equal(m(session({ project: 'docs' })), false);
+  assert.equal(m(session({ project: 'api', gitBranch: 'wip/x' })), false);
+});

@@ -11,6 +11,13 @@ export const EVENTS_DIR = path.join(ROOT, 'events');
 export const SPOOL_FILE = path.join(ROOT, 'spool.jsonl');
 
 /**
+ * Where view presets are read from — and only ever read. Under the shipped
+ * systemd unit this lands in /var/lib/agent-cctv/views, where one directory of
+ * views is shared by everyone on the box, which is the right default there.
+ */
+export const VIEWS_DIR = process.env.AGENT_CCTV_VIEWS_DIR || path.join(ROOT, 'views');
+
+/**
  * Claude Code's own state, which agent-cctv reads but never writes.
  * These are undocumented internals — everything that touches them is behind
  * the claude-code source adapter and capability-checked at startup.
