@@ -997,7 +997,7 @@ function refreshFilterOptions() {
     for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
     const wanted = ['all', ...[...counts.keys()].sort()];
     const current = [...select.options].map((o) => o.value);
-    if (current.join(' ') !== wanted.join(' ')) {
+    if (current.join('\0') !== wanted.join('\0')) {
       select.replaceChildren();
       for (const v of wanted) {
         const label = v === 'all' ? `all (${values.length})` : `${labelFor(v)} (${counts.get(v)})`;
