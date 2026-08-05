@@ -6,7 +6,37 @@
 */
 
 const token = new URLSearchParams(location.search).get('token') || '';
-const api = (p) => p + (token ? (p.includes('?') ? '&' : '?') + 'token=' + token : '');
+/*
+  The document request already carried the token, so the server has issued an
+  HttpOnly cookie. Probe once without the token: if the cookie works we stop
+  sending it entirely and scrub it from the address bar, which keeps it out of
+  proxy access logs. If cookies are blocked we fall back to the query string.
+*/
+let useCookie = false;
+/*
+  Set when there is no token in the URL and the cookie probe below comes back
+  401: no credential anywhere, not just a dropped connection. That is the
+  bookmark-after-restart case — establishSession() scrubs the token out of the
+  address bar on success, and the cookie it leaves behind is now the only way
+  back in, so once it expires a bare `/` has nothing to authenticate with.
+*/
+let authFailed = false;
+const api = (p) => (useCookie || !token ? p : p + (p.includes('?') ? '&' : '?') + 'token=' + token);
+
+async function establishSession() {
+  let probe;
+  try {
+    probe = await fetch('/api/state', { credentials: 'same-origin' });
+  } catch {
+    return; // a network hiccup, not an auth problem — connect() reports it as "signal lost"
+  }
+  if (token) {
+    useCookie = probe.ok;
+    if (useCookie) history.replaceState(null, '', location.pathname);
+  } else if (probe.status === 401) {
+    authFailed = true;
+  }
+}
 
 const wall = document.getElementById('wall');
 const link = document.getElementById('link');
@@ -517,12 +547,19 @@ function layout() {
 let emptyNode = null;
 
 /**
- * Nothing on the wall means one of three different things, and saying the wrong
+ * Nothing on the wall means one of four different things, and saying the wrong
  * one is a small lie the reader has no way to check: before the first snapshot we
  * simply have not looked yet, which is not the same as "you have no sessions",
- * which is not the same as "your filters exclude them all".
+ * which is not the same as "your filters exclude them all" — and none of those
+ * is "you have no credential", which never resolves on its own.
  */
 function emptyCopy() {
+  if (authFailed) {
+    return [
+      'No credential',
+      'This link has no token and the saved one is gone. Reopen the link your operator gave you.',
+    ];
+  }
   if (!booted) return ['Connecting', 'Reading what every agent on this machine is doing.'];
   if (filters.state === 'all' && filters.source === 'all' && filters.project === 'all') {
     return [
@@ -979,7 +1016,7 @@ function refreshFilterOptions() {
     for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
     const wanted = ['all', ...[...counts.keys()].sort()];
     const current = [...select.options].map((o) => o.value);
-    if (current.join(' ') !== wanted.join(' ')) {
+    if (current.join('\0') !== wanted.join('\0')) {
       select.replaceChildren();
       for (const v of wanted) {
         const label = v === 'all' ? `all (${values.length})` : `${labelFor(v)} (${counts.get(v)})`;
@@ -1142,6 +1179,18 @@ setInterval(() => {
 /* ── stream ────────────────────────────────────────────────────────────── */
 
 function connect() {
+  if (authFailed) {
+    // No point opening an EventSource that will just 401 and retry forever —
+    // and "signal lost" would tell the user the wrong thing to try (wait for
+    // the network) instead of the right one (reopen the link).
+    link.dataset.up = 'false';
+    link.textContent = 'no credential';
+    link.title = 'Reopen the link your operator gave you — it carries the token this page needs.';
+    document.body.dataset.stale = 'true';
+    layout(); // repaint the empty card now instead of leaving "Connecting" up forever
+    return;
+  }
+
   const es = new EventSource(api('/api/stream'));
 
   es.addEventListener('open', () => {
@@ -1195,4 +1244,4 @@ function connect() {
 }
 
 layout();
-connect();
+establishSession().then(connect);

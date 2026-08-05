@@ -26,23 +26,35 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
+const COOKIE_NAME = 'cctv';
+/** 30 days. Without an explicit lifetime the cookie is session-only — but by
+ * the time it is set, establishSession() has already scrubbed the token out
+ * of the address bar and history, so a browser restart left a bookmarked `/`
+ * with no way back in. This keeps the credential outliving that restart. */
+const COOKIE_MAX_AGE_S = 30 * 24 * 60 * 60;
+
 /**
  * The dashboard streams source code out of transcripts, so loopback alone is not
  * a security boundary: any page in the browser can POST to 127.0.0.1, and a
  * DNS-rebound hostname resolves there too. We check Host and Origin, and require
  * a per-run token for anything that returns session data.
  */
-function hostAllowed(req) {
-  const host = (req.headers.host || '').split(':')[0].toLowerCase().replace(/^\[|\]$/g, '');
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+/** `example.com:4599` and `[::1]:4599` both reduce to a bare hostname. */
+function hostname(value) {
+  const h = String(value || '').trim().toLowerCase();
+  if (h.startsWith('[')) return h.slice(1, h.indexOf(']')); // [::1]:4599
+  return h.split(':')[0];
 }
 
-function originAllowed(req) {
+function hostAllowed(req, allowed) {
+  return allowed.has(hostname(req.headers.host));
+}
+
+function originAllowed(req, allowed) {
   const origin = req.headers.origin;
   if (!origin) return true; // same-origin navigations and curl send none
   try {
-    const h = new URL(origin).hostname;
-    return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+    return allowed.has(hostname(new URL(origin).hostname));
   } catch {
     return false;
   }
@@ -74,7 +86,20 @@ function readBody(req, limit = 8 * 1024 * 1024) {
   });
 }
 
-export function createServer({ store = new Store(), token = null, withSource = true } = {}) {
+export function createServer({
+  store = new Store(),
+  token = null,
+  withSource = true,
+  allowedHosts = ['localhost', '127.0.0.1', '::1'],
+  secureCookie = false,
+} = {}) {
+  // Do NOT run these through hostname(): that function strips a :port, and a
+  // bare '::1' would reduce to '' — silently dropping loopback from its own
+  // allowlist. Allowlist entries are already bare hostnames.
+  const allowed = new Set(
+    allowedHosts.map((h) => String(h).trim().toLowerCase().replace(/^\[|\]$/g, ''))
+  );
+
   /** @type {Set<import('node:http').ServerResponse>} */
   const clients = new Set();
 
@@ -104,20 +129,77 @@ export function createServer({ store = new Store(), token = null, withSource = t
     store.capabilities = { [CLAUDE]: capabilities(), [CODEX]: codexCapabilities() };
   }
 
+  /** Constant-time compare — this is a shared secret on a network-reachable port. */
+  function sameSecret(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const A = Buffer.from(a);
+    const B = Buffer.from(b);
+    if (A.length !== B.length) return false;
+    return crypto.timingSafeEqual(A, B);
+  }
+
+  /**
+   * All `cctv=` values on the request, not just the first. A cookie header can
+   * legally carry more than one pair with the same name — e.g. a sibling
+   * origin under a shared parent domain (`Domain=corp.example; cctv=junk` on
+   * `cctv.corp.example`) — and their order is not guaranteed. Stopping at the
+   * first match would let a junk pair shadow the real one and lock the user
+   * out with no recovery, so every candidate is returned and checked.
+   */
+  function cookieTokens(req) {
+    const raw = req.headers.cookie;
+    if (!raw) return [];
+    const values = [];
+    for (const part of raw.split(';')) {
+      const eq = part.indexOf('=');
+      if (eq < 0) continue;
+      if (part.slice(0, eq).trim() !== COOKIE_NAME) continue;
+      try {
+        values.push(decodeURIComponent(part.slice(eq + 1).trim()));
+      } catch {
+        // Skip an unparseable pair rather than aborting the scan for the rest.
+      }
+    }
+    return values;
+  }
+
+  /** Which credential authenticated this request, or null. */
+  function authSource(req, url) {
+    if (!token) return 'open';
+    if (sameSecret(url.searchParams.get('token'), token)) return 'query';
+    if (sameSecret(req.headers['x-cctv-token'], token)) return 'header';
+    if (cookieTokens(req).some((v) => sameSecret(v, token))) return 'cookie';
+    return null;
+  }
+
   function authed(req, url) {
-    if (!token) return true;
-    return url.searchParams.get('token') === token || req.headers['x-cctv-token'] === token;
+    return authSource(req, url) !== null;
   }
 
   const server = http.createServer(async (req, res) => {
-    if (!hostAllowed(req)) return json(res, 403, { error: 'bad host' });
-    if (!originAllowed(req)) return json(res, 403, { error: 'bad origin' });
+    if (!hostAllowed(req, allowed)) return json(res, 403, { error: 'bad host' });
+    if (!originAllowed(req, allowed)) return json(res, 403, { error: 'bad origin' });
 
     const url = new URL(req.url, 'http://localhost');
     const route = url.pathname;
 
+    // Swap a URL or header token for a cookie once, so the token stops appearing
+    // in the query string of every request — including the long-lived SSE stream,
+    // which EventSource cannot send headers on.
+    const credential = authSource(req, url);
+    if (credential === 'query' || credential === 'header') {
+      res.setHeader(
+        'set-cookie',
+        `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}` +
+          (secureCookie ? '; Secure' : '')
+      );
+    }
+
     // Optional hook ingestion. Enrichment only — the registry still wins on state.
     if (route === '/ingest' && req.method === 'POST') {
+      // Before the generic /api/ gate below, so this needs its own check. An open
+      // /ingest lets any local process mint sessions, and each one costs a Ring(400).
+      if (!authed(req, url)) return json(res, 401, { error: 'token required' });
       try {
         const envelope = safeJson(await readBody(req));
         if (!envelope) return json(res, 400, { error: 'bad json' });
@@ -130,12 +212,10 @@ export function createServer({ store = new Store(), token = null, withSource = t
     }
 
     if (route === '/api/health') {
-      return json(res, 200, {
-        ok: true,
-        pid: process.pid,
-        sessions: store.sessions.size,
-        capabilities: store.capabilities,
-      });
+      // Unauthenticated on purpose: load balancers and alerting rules need it.
+      // `capabilities` is included so operators can alert on a Claude Code
+      // update having moved the internals out from under us.
+      return json(res, 200, { ok: true, capabilities: store.capabilities });
     }
 
     // Everything below returns session content.
@@ -261,13 +341,9 @@ function drainSpool(store) {
   }
 }
 
-export function newToken() {
-  return crypto.randomBytes(16).toString('hex');
-}
-
-export function start({ port = DEFAULT_PORT, host = DEFAULT_HOST, store, token } = {}) {
+export function start({ port = DEFAULT_PORT, host = DEFAULT_HOST, store, token, allowedHosts, secureCookie } = {}) {
   return new Promise((resolve, reject) => {
-    const server = createServer({ store, token });
+    const server = createServer({ store, token, allowedHosts, secureCookie });
     server.once('error', reject);
     server.listen(port, host, () => resolve(server));
   });

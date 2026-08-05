@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import process from 'node:process';
-import { start, newToken } from '../src/server.js';
+import { start } from '../src/server.js';
 import { Store } from '../src/store.js';
+import { resolve, validate, ConfigError } from '../src/config.js';
 import { capabilities } from '../src/sources/claude-code/index.js';
 import { capabilities as codexCaps } from '../src/sources/codex/index.js';
-import { writeConfig, readConfig, DEFAULT_PORT, DEFAULT_HOST } from '../src/paths.js';
+import { writeConfig, readConfig, CONFIG_FILE, DEFAULT_PORT, DEFAULT_HOST } from '../src/paths.js';
 import * as installer from '../src/install.js';
 
 const c = {
@@ -17,13 +18,25 @@ const c = {
   cyan: (s) => `\x1b[36m${s}\x1b[0m`,
 };
 
+// These never take a value, so a bare mention always means true — regardless
+// of what follows on the command line. Without this list, `--no-open start`
+// consumes "start" as --no-open's value (flags['no-open'] = 'start'), which
+// is truthy but not === true, so the strict boolean check in resolve() misses
+// it and a browser opens anyway; `--no-token start` mints a token instead of
+// disabling it the same way; and either one leaves the subcommand unparsed,
+// so args._ is empty and `cmd` silently falls back to its "start" default —
+// masking the bug rather than surfacing it for anything but "start" itself.
+const BOOLEAN_FLAGS = new Set(['no-open', 'no-token', 'project', 'help']);
+
 function parseArgs(argv) {
   const args = { _: [], flags: {} };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=');
-      args.flags[k] = v ?? (argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true);
+      args.flags[k] = BOOLEAN_FLAGS.has(k)
+        ? (v ?? true)
+        : v ?? (argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true);
     } else if (a.startsWith('-') && a.length > 1) {
       args.flags[a.slice(1)] = true;
     } else {
@@ -48,9 +61,16 @@ ${c.bold('Options')}
   --host <addr>    Bind address                ${c.dim(`(default ${DEFAULT_HOST}, loopback only)`)}
   --no-open        Don't open a browser
   --no-token       Skip the URL token          ${c.dim('(only if nothing else runs on this machine)')}
+  --public-url <url>  Public URL when behind a reverse proxy ${c.dim('(adds its host to the allowlist)')}
   --project        install/uninstall into ./.claude/settings.json instead of global
 
 ${c.dim('No installation is required to watch Claude Code — just run it.')}
+
+${c.bold('Environment')}
+  AGENT_CCTV_TOKEN       Stable token, 16+ chars ${c.dim('(otherwise a random one per run)')}
+  AGENT_CCTV_PUBLIC_URL  Public URL when behind a reverse proxy
+  AGENT_CCTV_HOST        Bind address
+  AGENT_CCTV_PORT        Port
 `;
 
 function openBrowser(url) {
@@ -71,13 +91,34 @@ async function cmdStart(flags) {
     return;
   }
 
-  const port = Number(flags.port) || DEFAULT_PORT;
-  const host = flags.host || DEFAULT_HOST;
-  const token = flags.token === false || flags['no-token'] ? null : newToken();
+  let cfg;
+  try {
+    for (const name of ['host', 'port', 'public-url']) {
+      if (flags[name] === true || flags[name] === '') {
+        throw new ConfigError(`--${name} requires a value.`);
+      }
+    }
+    cfg = validate(resolve({ flags }));
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    console.error('');
+    console.error(`  ${c.red('✗')} ${err.message}`);
+    console.error('');
+    process.exitCode = 1;
+    return;
+  }
+  const { port, host, token } = cfg;
 
   let server;
   try {
-    server = await start({ port, host, store: new Store(), token });
+    server = await start({
+      port,
+      host,
+      store: new Store(),
+      token,
+      allowedHosts: cfg.allowedHosts,
+      secureCookie: cfg.secureCookie,
+    });
   } catch (err) {
     if (err.code === 'EADDRINUSE') {
       console.error(c.red(`Port ${port} is busy.`), c.dim('Is agent-cctv already running?'));
@@ -88,12 +129,39 @@ async function cmdStart(flags) {
     throw err;
   }
 
-  writeConfig({ port, host, token, startedAt: Date.now(), pid: process.pid });
+  // Convenience state only (`status`'s "last served on" line, and the
+  // optional hook reporter's token lookup) — never worth taking a running
+  // server down for. A read-only home (e.g. systemd's ProtectSystem=strict
+  // without AGENT_CCTV_HOME redirected) must not crash-loop the process.
+  try {
+    writeConfig({ port, host, token, startedAt: Date.now(), pid: process.pid });
+  } catch (err) {
+    console.error(c.dim(`  could not write ${CONFIG_FILE} (${err.message}) — continuing without it`));
+  }
 
-  const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/${token ? `?token=${token}` : ''}`;
+  const local = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/`;
+  const rawBase = cfg.publicUrlRaw || local;
+  // Normalise to a trailing slash before appending a query string — publicUrlRaw
+  // is operator-typed (e.g. "https://cctv.corp.example", no trailing slash) and
+  // "https://cctv.corp.example?token=…" is missing the "/" a browser inserts
+  // silently but a person handing the link out sees as broken.
+  const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
+  // Two different URLs, on purpose. A token that came from AGENT_CCTV_TOKEN is
+  // the operator's to distribute — printing it in the banner just puts it in
+  // the systemd journal too, readable by more people than "whoever could ssh
+  // here". But the tab this process opens for *itself* is not a log: it still
+  // needs the token, or it lands on a bare "/" with no cookie yet and hits the
+  // "no credential" wall the SPA shows for a missing one. A freshly minted
+  // token has no other channel than the banner, so it still prints in full.
+  const tokenedUrl = base + (token ? `?token=${token}` : '');
+  const showTokenInBanner = token && !cfg.tokenFromEnv;
+  const bannerUrl = base + (showTokenInBanner ? `?token=${token}` : '');
   console.log('');
   console.log(`  ${c.bold('agent-cctv')} ${c.dim('watching')}`);
-  console.log(`  ${c.cyan(url)}`);
+  console.log(`  ${c.cyan(bannerUrl)}`);
+  if (token && cfg.tokenFromEnv) {
+    console.log(`  ${c.dim('token from AGENT_CCTV_TOKEN — share it out of band, not this URL')}`);
+  }
   console.log('');
   console.log(
     `  ${c.dim('claude code')}  ${caps.registry ? c.green('●') : c.yellow('○')} session registry   ` +
@@ -113,7 +181,7 @@ async function cmdStart(flags) {
   console.log(c.dim('  ctrl-c to stop'));
   console.log('');
 
-  if (!flags['no-open'] && flags.open !== false) openBrowser(url);
+  if (cfg.openBrowser) openBrowser(tokenedUrl);
 
   const shutdown = () => {
     console.log(c.dim('\n  stopping…'));

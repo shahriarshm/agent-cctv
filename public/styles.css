@@ -195,8 +195,16 @@ body[data-locked='true'] {
 
 .masthead {
   display: flex;
+  /* Wrap on fit, not on a guessed breakpoint. The labels inside deliberately
+     never wrap (see .readout span), so the row has a hard minimum width — tying
+     the wrap to a fixed media query left a band of window sizes where the header
+     was too wide to fit and too wide to wrap, and the whole page scrolled
+     sideways. A second header row is a far better failure than that. */
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s4);
+  /* after the `gap` shorthand, which would otherwise reset it */
+  row-gap: var(--s2);
   padding: var(--s2) var(--s4);
   border-bottom: 1px solid var(--edge);
   background: var(--panel);
@@ -207,6 +215,7 @@ body[data-locked='true'] {
 
 .zone {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s3);
 }
@@ -243,6 +252,7 @@ body[data-locked='true'] {
    only one allowed to shout, and only when it has something to shout about. */
 .readouts {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--edge);
@@ -275,6 +285,10 @@ body[data-locked='true'] {
   font-size: var(--t-eyebrow);
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  /* "need you" is the only two-word label here. Left to wrap it breaks the
+     baseline it shares with the other three counts and makes its button
+     taller than its neighbours. */
+  white-space: nowrap;
 }
 
 .readout:hover b,
@@ -315,6 +329,12 @@ body[data-locked='true'] {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-3);
+}
+
+/* Same reason as .readout span: "group by" wrapping drops its label off the
+   baseline shared with the single-word "agent" and "project" beside it. */
+.pick > span {
+  white-space: nowrap;
 }
 
 .pick select {
@@ -1408,10 +1428,8 @@ body[data-stale='true'] .archive {
 /* ── responsive & motion ──────────────────────────────────────────────── */
 
 @media (max-width: 1100px) {
-  .masthead {
-    flex-wrap: wrap;
-    row-gap: var(--s2);
-  }
+  /* .masthead wraps at every width now, so only the spacer is breakpoint-bound:
+     once the header has wrapped there is nothing left to push apart. */
   .masthead-spacer {
     display: none;
   }

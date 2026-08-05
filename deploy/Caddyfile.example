@@ -1,0 +1,13 @@
+# Caddy gets a certificate automatically. agent-cctv ships no TLS of its own.
+cctv.corp.example {
+	# Your SSO. Anything that authenticates the human works here.
+	forward_auth authelia.internal:9091 {
+		uri /api/verify?rd=https://auth.corp.example
+		copy_headers Remote-User Remote-Groups
+	}
+
+	reverse_proxy 127.0.0.1:4599 {
+		# The dashboard streams server-sent events; do not buffer them.
+		flush_interval -1
+	}
+}

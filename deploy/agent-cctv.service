@@ -1,0 +1,52 @@
+[Unit]
+Description=agent-cctv — live wall of coding agent sessions
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# Run as the same account the agents run as — agent-cctv reads the agents'
+# state from that account's home directory (see src/paths.js), so a different
+# account, even one sharing its group, looks in the wrong home entirely and
+# finds nothing.
+# Never root: this process serves file contents over HTTP.
+User=agents
+Group=agents
+EnvironmentFile=/etc/agent-cctv/agent-cctv.env
+# Install first: npm i -g agent-cctv@<version> — pin the version, the same way
+# the README tells you to pin Claude Code. `npx --yes` would fetch an unpinned
+# package from the registry on every restart, and under ProtectHome=read-only
+# below it also fails outright: npx needs to write $HOME/.npm, which is
+# read-only here, so the unit would crash-loop before agent-cctv ever runs.
+#
+# The path below assumes a global npm prefix of /usr — true for the Node
+# package most distros ship, but not universal (a stock `npm i -g` on many
+# setups installs to /usr/local/bin instead). Confirm with `npm prefix -g` as
+# the account this unit runs as, and change the path below to match — a wrong
+# path here is systemd's 203/EXEC, and with Restart=on-failure that is the
+# same crash-loop this whole fix exists to avoid.
+ExecStart=/usr/bin/agent-cctv start --no-open
+Restart=on-failure
+RestartSec=5
+
+# It mostly only reads — but it does write one small convenience file (last
+# host/port/pid, for `agent-cctv status`) to $AGENT_CCTV_HOME, which defaults
+# to ~/.agent-cctv. ProtectSystem=strict below makes the whole filesystem
+# read-only except /dev, /proc, /sys, and PrivateTmp's /tmp — including
+# User='s home directory — so that default location would not be writable
+# here. Rather than guess the account's home, redirect it to the writable
+# directory systemd itself manages for this unit.
+StateDirectory=agent-cctv
+Environment=AGENT_CCTV_HOME=/var/lib/agent-cctv
+
+# Give it nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
