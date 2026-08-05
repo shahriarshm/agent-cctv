@@ -18,6 +18,13 @@ EnvironmentFile=/etc/agent-cctv/agent-cctv.env
 # package from the registry on every restart, and under ProtectHome=read-only
 # below it also fails outright: npx needs to write $HOME/.npm, which is
 # read-only here, so the unit would crash-loop before agent-cctv ever runs.
+#
+# The path below assumes a global npm prefix of /usr — true for the Node
+# package most distros ship, but not universal (a stock `npm i -g` on many
+# setups installs to /usr/local/bin instead). Confirm with `npm prefix -g` as
+# the account this unit runs as, and change the path below to match — a wrong
+# path here is systemd's 203/EXEC, and with Restart=on-failure that is the
+# same crash-loop this whole fix exists to avoid.
 ExecStart=/usr/bin/agent-cctv start --no-open
 Restart=on-failure
 RestartSec=5
