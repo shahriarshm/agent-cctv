@@ -250,3 +250,18 @@ test('an already-cookied request is not re-issued a cookie', async () => {
     await s.close();
   }
 });
+
+/* ── health ────────────────────────────────────────────────────────────── */
+
+test('/api/health reveals liveness and capabilities, and nothing else', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url('/api/health'));
+    assert.equal(res.status, 200, 'health must not require the token');
+    const body = await res.json();
+    assert.deepEqual(Object.keys(body).sort(), ['capabilities', 'ok']);
+    assert.equal(body.ok, true);
+  } finally {
+    await s.close();
+  }
+});

@@ -198,12 +198,10 @@ export function createServer({
     }
 
     if (route === '/api/health') {
-      return json(res, 200, {
-        ok: true,
-        pid: process.pid,
-        sessions: store.sessions.size,
-        capabilities: store.capabilities,
-      });
+      // Unauthenticated on purpose: load balancers and alerting rules need it.
+      // `capabilities` is included so operators can alert on a Claude Code
+      // update having moved the internals out from under us.
+      return json(res, 200, { ok: true, capabilities: store.capabilities });
     }
 
     // Everything below returns session content.
