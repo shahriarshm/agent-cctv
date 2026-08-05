@@ -23,9 +23,12 @@ export function isLoopback(host) {
 }
 
 /**
- * Settings come from flags, then the environment, then the config file, then
- * defaults. There is deliberately no "server mode": a company deployment is
- * two environment variables, not a second code path.
+ * Settings come from flags, then the environment, then defaults. The config
+ * file (~/.agent-cctv/config.json, the `file` parameter) does not participate
+ * at all — see the comment on it below for why — it is accepted only so a
+ * caller (and the regression test in test/config.test.js) can prove that.
+ * There is deliberately no "server mode": a company deployment is two
+ * environment variables, not a second code path.
  */
 export function resolve({ flags = {}, env = process.env, file = readConfig(), makeToken = newToken } = {}) {
   // `file` (~/.agent-cctv/config.json) is deliberately NOT consulted for host
