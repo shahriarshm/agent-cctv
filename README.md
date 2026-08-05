@@ -272,6 +272,13 @@ record, and on this topology they are on the same disk.
   it destroys the one authoritative signal the tool has. Use npm + systemd.
 - **Agents inside containers are out of scope.** Their state directory is
   invisible and their pids are in another namespace.
+- **Your reverse proxy must forward the original `Host`.** A hand-rolled proxy
+  that rewrites `Host` to `localhost` upstream would let a tokenless loopback
+  deployment serve transcripts to the whole network — from agent-cctv's side
+  that request is indistinguishable from one made on the box itself, and no
+  refusal rule here can detect it. The shipped Caddy and nginx examples both
+  forward the original host (`proxy_set_header Host $host` / Caddy's default),
+  so they fail closed; a proxy config you write yourself needs to do the same.
 - **Hooks and the daemon must share a user.** `agent-cctv start` writes the
   token to `~/.agent-cctv/config.json` (mode 0600); hooks (added by
   `agent-cctv install`) read it from there to authenticate to `/ingest`. If the
