@@ -264,9 +264,7 @@ function drainSpool(store) {
   }
 }
 
-export function newToken() {
-  return crypto.randomBytes(16).toString('hex');
-}
+export { newToken } from './config.js';
 
 export function start({ port = DEFAULT_PORT, host = DEFAULT_HOST, store, token } = {}) {
   return new Promise((resolve, reject) => {
