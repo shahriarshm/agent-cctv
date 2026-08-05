@@ -118,6 +118,9 @@ export function createServer({ store = new Store(), token = null, withSource = t
 
     // Optional hook ingestion. Enrichment only — the registry still wins on state.
     if (route === '/ingest' && req.method === 'POST') {
+      // Before the generic /api/ gate below, so this needs its own check. An open
+      // /ingest lets any local process mint sessions, and each one costs a Ring(400).
+      if (!authed(req, url)) return json(res, 401, { error: 'token required' });
       try {
         const envelope = safeJson(await readBody(req));
         if (!envelope) return json(res, 400, { error: 'bad json' });
