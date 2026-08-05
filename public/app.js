@@ -7,6 +7,12 @@
 
 const token = new URLSearchParams(location.search).get('token') || '';
 /*
+  Read now, because establishSession() replaces the URL with a bare path once the
+  cookie is established. The selection persists in localStorage from there, so a
+  reload of the scrubbed URL still lands on the same view.
+*/
+const viewParam = new URLSearchParams(location.search).get('view');
+/*
   The document request already carried the token, so the server has issued an
   HttpOnly cookie. Probe once without the token: if the cookie works we stop
   sending it entirely and scrub it from the address bar, which keeps it out of
@@ -49,6 +55,7 @@ const titleEl = document.getElementById('inspector-title');
 
 import { sourceMeta } from './icons.js';
 import { shouldNotify, describe as describeAlert } from './notify.js';
+import { mountViews, setViews, inView, currentView, wantedViewId } from './views.js';
 
 const sessions = new Map();
 const tiles = new Map();
@@ -162,6 +169,7 @@ function rank(s) {
 }
 
 function visible(s) {
+  if (!inView(s)) return false;
   if (filters.source !== 'all' && s.source !== filters.source) return false;
   if (filters.project !== 'all' && s.project !== filters.project) return false;
   if (filters.state === 'live') return s.state !== 'ended';
@@ -405,6 +413,12 @@ const announceEl = document.getElementById('announce');
 function alertFor(prev, next) {
   if (!next.urgent) return dismissAlert(next.id);
   if (!booted) return;
+  /*
+    Scoped to the view's population, never to what is on screen: sitting on the
+    "working" filter must still tell you when a session leaves it for blocked —
+    that transition is the only thing this alert exists for.
+  */
+  if (!inView(next)) return;
   if (!shouldNotify(prev, next)) return;
 
   // Spoken whether or not desktop alerts are armed: the wall is not narrated, so
@@ -562,6 +576,13 @@ function emptyCopy() {
   }
   if (!booted) return ['Connecting', 'Reading what every agent on this machine is doing.'];
   if (filters.state === 'all' && filters.source === 'all' && filters.project === 'all') {
+    const view = currentView();
+    if (view.id !== 'all') {
+      return [
+        'Nothing in this view',
+        `No session matches ${view.name} right now. Switch to Everything for the whole wall.`,
+      ];
+    }
     return [
       'No feeds',
       'Start a Claude Code or Codex session in any terminal and it appears here. Nothing to install, nothing to restart.',
@@ -592,7 +613,9 @@ function renderEmpty() {
 }
 
 function paintStats() {
-  const all = [...sessions.values()];
+  // Counted within the view: a button's figure must stay exactly what clicking
+  // it leaves on the wall.
+  const all = [...sessions.values()].filter(inView);
   for (const [key, match] of Object.entries(COUNTS)) {
     document.getElementById(`stat-${key}`).textContent = all.filter(match).length;
   }
@@ -1009,7 +1032,7 @@ function applyFilters() {
  * whose value disappears falls back to "all" rather than showing nothing.
  */
 function refreshFilterOptions() {
-  const all = [...sessions.values()];
+  const all = [...sessions.values()].filter(inView);
 
   const build = (select, key, values, labelFor) => {
     const counts = new Map();
@@ -1241,7 +1264,48 @@ function connect() {
   });
 
   es.addEventListener('removed', (e) => remove(JSON.parse(e.data).id));
+
+  es.addEventListener('views', (e) => {
+    const before = currentView().id;
+    const view = setViews(JSON.parse(e.data));
+    // Only a genuine switch — the selected view was deleted — re-seeds group-by.
+    applyView(view, { seedGroup: view.id !== before });
+  });
 }
 
+/* ── views ─────────────────────────────────────────────────────────────── */
+
+/**
+ * A view seeds the group-by select on *switching to it*, and only then —
+ * editing some other view file must not throw away a group-by you set by hand.
+ * Nothing here is ever written back to the file.
+ */
+function applyView(view, { seedGroup = true } = {}) {
+  // The id asked for, not the one resolved to — a view that is momentarily
+  // missing must not overwrite the preference with "Everything".
+  filters.view = wantedViewId();
+  if (seedGroup && view.groupBy) {
+    filters.groupBy = view.groupBy;
+    groupSel.value = view.groupBy;
+  }
+  saveFilters();
+  refreshFilterOptions();
+  layout();
+  paintStats();
+}
+
+async function loadViewCatalog() {
+  try {
+    const res = await fetch(api('/api/views'), { credentials: 'same-origin' });
+    if (!res.ok) return;
+    applyView(setViews(await res.json()));
+  } catch {}
+}
+
+mountViews({ initialId: viewParam || filters.view, onSelect: applyView });
+
 layout();
-establishSession().then(connect);
+establishSession().then(() => {
+  loadViewCatalog();
+  connect();
+});

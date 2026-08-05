@@ -366,6 +366,20 @@ body[data-locked='true'] {
   color: var(--ink);
 }
 
+/* A view file that would not parse. Ember, not red: red on this wall means a
+   session is blocked on you, and a config typo is the machine's problem. */
+.view-warn {
+  font-size: var(--t-eyebrow);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ember-ink);
+  border: 1px solid var(--ember);
+  border-radius: var(--radius-sm);
+  padding: 3px var(--s2);
+  cursor: help;
+  white-space: nowrap;
+}
+
 .bell,
 .chip {
   appearance: none;

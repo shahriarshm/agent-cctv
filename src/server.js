@@ -11,6 +11,7 @@ import { CodexSource, capabilities as codexCapabilities, SOURCE as CODEX } from 
 import { fromHook } from './sources/claude-code/hooks.js';
 import { readTasks } from './sources/claude-code/tasks.js';
 import { listSessions, loadSession } from './history.js';
+import { loadViews, watchViews } from './views.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -92,6 +93,7 @@ export function createServer({
   withSource = true,
   allowedHosts = ['localhost', '127.0.0.1', '::1'],
   secureCookie = false,
+  viewsDir = undefined,
 } = {}) {
   // Do NOT run these through hostname(): that function strips a :port, and a
   // bare '::1' would reduce to '' — silently dropping loopback from its own
@@ -118,6 +120,17 @@ export function createServer({
   store.on('session', (s) => broadcast('session', serialize(s)));
   store.on('activity', (ev, s) => broadcast('activity', { ...ev, sessionName: s.name || s.project }));
   store.on('removed', (id) => broadcast('removed', { id }));
+
+  /*
+    Read once at startup and again on any change, then pushed. The browser does
+    the matching — it already holds every session, so a view switch is instant
+    and the four readouts can recount against the view without a round trip.
+  */
+  let views = loadViews(viewsDir);
+  const stopViews = watchViews(() => {
+    views = loadViews(viewsDir);
+    broadcast('views', views);
+  }, viewsDir);
 
   /** Every source is just a thing that emits `{sessionId, patch, events}`. */
   let sources = [];
@@ -225,6 +238,8 @@ export function createServer({
 
     if (route === '/api/state') return json(res, 200, store.snapshot());
 
+    if (route === '/api/views') return json(res, 200, views);
+
     // Sessions that have already left the wall. Read straight from the agents'
     // own logs on demand — nothing is persisted here to make this work.
     if (route === '/api/history') {
@@ -306,6 +321,7 @@ export function createServer({
   sweeper.unref();
 
   server.on('close', () => {
+    stopViews();
     clearInterval(sweeper);
     for (const s of sources) s.stop();
     for (const res of clients) {
@@ -318,6 +334,7 @@ export function createServer({
   server.store = store;
   server.sources = sources;
   server.clientCount = () => clients.size;
+  server.views = () => views;
   return server;
 }
 
