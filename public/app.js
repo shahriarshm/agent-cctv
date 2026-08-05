@@ -58,6 +58,7 @@ import { shouldNotify, describe as describeAlert } from './notify.js';
 import { mountViews, setViews, inView, currentView, wantedViewId } from './views.js';
 import { el, shortPath, plain, since, clockTime, tokens } from './format.js';
 import { createTimeline } from './timeline.js';
+import { createFocus, createTail } from './modes.js';
 
 /** The inspector's timeline. Focus mode makes a second one of these. */
 const inspectorTimeline = createTimeline(timelineEl);
@@ -68,7 +69,7 @@ const groupNodes = new Map();
 /** A dashboard you leave open should come back the way you left it. */
 const FILTER_KEY = 'agent-cctv:view';
 const filters = Object.assign(
-  { state: 'all', source: 'all', project: 'all', groupBy: 'none', notify: false },
+  { state: 'all', source: 'all', project: 'all', groupBy: 'none', mode: 'wall', notify: false },
   (() => {
     try {
       return JSON.parse(localStorage.getItem(FILTER_KEY)) || {};
@@ -313,6 +314,7 @@ function paintStrip(tile, events) {
 
 function upsert(s) {
   const prev = sessions.get(s.id);
+  if (!prev) tailDirty = true;
   sessions.set(s.id, s);
   alertFor(prev, s);
   let tile = tiles.get(s.id);
@@ -329,6 +331,7 @@ function upsert(s) {
 }
 
 function remove(id) {
+  tailDirty = true;
   tiles.get(id)?.remove();
   tiles.delete(id);
   sessions.delete(id);
@@ -442,6 +445,21 @@ function layout() {
   const shown = [...sessions.values()]
     .filter(visible)
     .sort((a, b) => rank(a) - rank(b) || b.lastActivityAt - a.lastActivityAt);
+
+  // Focus and tail draw the same sessions a different way. They are handed the
+  // list the wall has already filtered and ranked, so all three modes agree
+  // about what is on screen and in what order.
+  if (filters.mode === 'focus') {
+    focusView.show(shown, emptyCopy());
+    return;
+  }
+  if (filters.mode === 'tail') {
+    if (tailDirty) {
+      tailView.show(shown);
+      tailDirty = false;
+    }
+    return;
+  }
 
   const grouping = GROUPS[filters.groupBy];
   wall.dataset.grouped = String(!!grouping);
@@ -842,6 +860,7 @@ const projectSel = document.getElementById('pick-project');
 
 function applyFilters() {
   saveFilters();
+  tailDirty = true;
   layout();
 }
 
@@ -946,6 +965,85 @@ groupSel.addEventListener('change', () => {
   filters.groupBy = groupSel.value;
   applyFilters();
 });
+
+/* ── modes ─────────────────────────────────────────────────────────────── */
+
+/** Must stay in step with MODES in src/views.js. */
+const MODES = ['wall', 'focus', 'tail'];
+const modeSel = document.getElementById('pick-mode');
+const focusEl = document.getElementById('focus');
+const tailEl = document.getElementById('tail');
+const groupLabel = document.getElementById('pick-group-label');
+
+const focusView = createFocus({
+  slot: document.getElementById('focus-slot'),
+  rail: document.getElementById('focus-rail'),
+  timeline: document.getElementById('focus-timeline'),
+  tileFor: (id) => tiles.get(id),
+  fetchSession: async (id) => {
+    try {
+      const res = await fetch(api('/api/session/' + encodeURIComponent(id)));
+      return res.ok ? await res.json() : null;
+    } catch {
+      return null;
+    }
+  },
+});
+const tailView = createTail(tailEl);
+/** Tail rebuilds from scratch only when the population changed, not on every
+    tile repaint — otherwise one event would redraw five hundred rows. */
+let tailDirty = true;
+
+/**
+ * `masthead.dataset.mode` already means archive-vs-wall, so the display mode
+ * lives on the body under its own name.
+ */
+function setMode(mode, { fromUser = false } = {}) {
+  if (!MODES.includes(mode)) mode = 'wall';
+  const changed = filters.mode !== mode;
+  filters.mode = mode;
+  modeSel.value = mode;
+  document.body.dataset.viewMode = mode;
+
+  wall.hidden = mode !== 'wall';
+  focusEl.hidden = mode !== 'focus';
+  tailEl.hidden = mode !== 'tail';
+  // Grouping only carves up a grid. A control left visible and inert is worse
+  // than one that is not there.
+  groupLabel.hidden = mode !== 'wall';
+
+  if (changed) {
+    // Tiles live in whichever container the last mode left them in; hand them
+    // back before the new one starts moving them around.
+    if (mode !== 'focus') focusView.hide();
+    if (mode === 'tail') tailDirty = true;
+    else tailView.clear();
+    if (mode === 'wall') for (const tile of tiles.values()) wall.append(tile);
+  }
+  if (fromUser) saveFilters();
+  layout();
+}
+
+modeSel.addEventListener('change', () => setMode(modeSel.value, { fromUser: true }));
+
+/*
+  A click in the rail promotes that session rather than opening the drawer — in
+  focus mode the big panel is already the detail view. Captured, so it runs
+  before the tile's own click handler.
+*/
+document.getElementById('focus-rail').addEventListener(
+  'click',
+  (e) => {
+    const tile = e.target.closest('.tile');
+    if (!tile) return;
+    e.stopPropagation();
+    const id = [...tiles.entries()].find(([, node]) => node === tile)?.[0];
+    if (!id) return;
+    focusView.pin(id);
+    layout();
+  },
+  true
+);
 
 /* ── state filter ──────────────────────────────────────────────────────── */
 
@@ -1079,6 +1177,13 @@ function connect() {
     const tile = tiles.get(ev.sessionId);
     if (tile) paintStrip(tile, [ev]);
     if (selected === ev.sessionId) inspectorTimeline.prepend(ev);
+    if (filters.mode === 'focus') focusView.activity(ev);
+    // Scoped to the view, exactly like alerts: a stream that quietly included
+    // sessions the view excludes would be lying about what you are watching.
+    if (filters.mode === 'tail') {
+      const s = sessions.get(ev.sessionId);
+      if (s && visible(s)) tailView.activity(ev, ev.sessionName || s.name);
+    }
   });
 
   es.addEventListener('removed', (e) => remove(JSON.parse(e.data).id));
@@ -1106,6 +1211,8 @@ function applyView(view, { seedGroup = true } = {}) {
     filters.groupBy = view.groupBy;
     groupSel.value = view.groupBy;
   }
+  if (seedGroup && view.mode) setMode(view.mode);
+  tailDirty = true;
   saveFilters();
   refreshFilterOptions();
   layout();
@@ -1119,6 +1226,8 @@ async function loadViewCatalog() {
     applyView(setViews(await res.json()));
   } catch {}
 }
+
+setMode(filters.mode);
 
 mountViews({ initialId: viewParam || filters.view, onSelect: applyView });
 

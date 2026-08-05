@@ -1485,3 +1485,105 @@ body[data-stale='true'] .archive {
     box-shadow: var(--lift), inset 0 0 0 2px var(--tally);
   }
 }
+
+/* ── focus and tail ──────────────────────────────────────────────────────── */
+
+/*
+  Focus is the CCTV spot monitor: one session takes the room, the others stay
+  visible at the edge so you have not actually left the wall. The rail keeps
+  real tiles — moved, not rebuilt — so their activity strips keep their history.
+*/
+.focus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: var(--s3);
+  padding: var(--s4) var(--s4) var(--s6);
+  align-items: start;
+  min-height: 0;
+}
+
+.focus-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+/* The focused tile is the wall's tile, scaled up. Its own rules still apply. */
+.focus-slot .tile {
+  min-height: 220px;
+}
+
+.focus-timeline {
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: var(--s2) var(--s3);
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.focus-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+}
+
+.focus-rail .tile {
+  cursor: pointer;
+}
+
+.focus-empty,
+.tail-empty {
+  color: var(--ink-3);
+  font-size: var(--t-meta);
+  padding: var(--s5) var(--s4);
+  text-align: center;
+}
+
+/*
+  Tail is the room as one log. Newest first and no auto-scroll, matching the
+  inspector — the thing you want is at the top and stays there, rather than a
+  pane that jumps while you are reading it.
+*/
+.tail {
+  padding: var(--s3) var(--s4) var(--s6);
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.tail .entry {
+  border-bottom: 1px solid var(--edge);
+}
+
+/* Which session a row belongs to — the one thing a merged stream has to say
+   that a single session's timeline never does. */
+.tail-who {
+  display: inline-block;
+  min-width: 120px;
+  margin-right: var(--s2);
+  color: var(--ink-3);
+  font-size: var(--t-meta);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+@media (max-width: 900px) {
+  .focus {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .focus-rail {
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+  }
+  .focus-rail .tile {
+    min-width: 260px;
+  }
+}

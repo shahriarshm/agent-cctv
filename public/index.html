@@ -75,6 +75,14 @@
           <select id="pick-project"><option value="all">all</option></select>
         </label>
         <label class="pick">
+          <span>mode</span>
+          <select id="pick-mode">
+            <option value="wall">wall</option>
+            <option value="focus">focus</option>
+            <option value="tail">tail</option>
+          </select>
+        </label>
+        <label class="pick" id="pick-group-label">
           <span>group by</span>
           <select id="pick-group">
             <option value="none">nothing</option>
@@ -105,6 +113,19 @@
     <p class="sr-only" id="announce" role="status" aria-live="polite"></p>
 
     <main class="wall" id="wall"></main>
+
+    <!-- One session big, the rest as a rail. The tiles are the wall's own nodes,
+         moved rather than rebuilt, so an activity strip keeps its history. -->
+    <section class="focus" id="focus" hidden aria-label="Focused session">
+      <div class="focus-main" id="focus-main">
+        <div class="focus-slot" id="focus-slot"></div>
+        <div class="timeline focus-timeline" id="focus-timeline"></div>
+      </div>
+      <div class="focus-rail" id="focus-rail"></div>
+    </section>
+
+    <!-- The whole room as one stream. -->
+    <section class="tail" id="tail" hidden aria-label="All activity"></section>
 
     <section class="archive" id="archive" hidden aria-label="Past sessions">
       <div class="archive-head">
