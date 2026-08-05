@@ -365,10 +365,18 @@ test('validate accepts the default configuration', () => {
   assert.equal(validate(bare()).host, '127.0.0.1');
 });
 
-test('binding a public interface without a token is refused', () => {
-  const cfg = bare({ flags: { host: '0.0.0.0' }, makeToken: () => null });
-  cfg.token = null;
-  assert.throws(() => validate(cfg), ConfigError);
+test('validate refuses a public bind with no token', () => {
+  // Built by hand rather than through resolve(): resolve() always mints a token
+  // unless --no-token, so this branch is validate() standing on its own as a
+  // guard for any future caller that assembles a config differently.
+  assert.throws(
+    () => validate({ host: '0.0.0.0', token: null, noToken: false, publicUrlRaw: null, publicHost: null }),
+    (err) => {
+      assert.ok(err instanceof ConfigError);
+      assert.match(err.message, /Refusing to bind 0\.0\.0\.0/);
+      return true;
+    }
+  );
 });
 
 test('--no-token combined with a public bind is refused, and says so', () => {
