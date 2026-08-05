@@ -18,13 +18,25 @@ const c = {
   cyan: (s) => `\x1b[36m${s}\x1b[0m`,
 };
 
+// These never take a value, so a bare mention always means true — regardless
+// of what follows on the command line. Without this list, `--no-open start`
+// consumes "start" as --no-open's value (flags['no-open'] = 'start'), which
+// is truthy but not === true, so the strict boolean check in resolve() misses
+// it and a browser opens anyway; `--no-token start` mints a token instead of
+// disabling it the same way; and either one leaves the subcommand unparsed,
+// so args._ is empty and `cmd` silently falls back to its "start" default —
+// masking the bug rather than surfacing it for anything but "start" itself.
+const BOOLEAN_FLAGS = new Set(['no-open', 'no-token', 'project', 'help']);
+
 function parseArgs(argv) {
   const args = { _: [], flags: {} };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=');
-      args.flags[k] = v ?? (argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true);
+      args.flags[k] = BOOLEAN_FLAGS.has(k)
+        ? (v ?? true)
+        : v ?? (argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true);
     } else if (a.startsWith('-') && a.length > 1) {
       args.flags[a.slice(1)] = true;
     } else {
@@ -128,10 +140,24 @@ async function cmdStart(flags) {
   }
 
   const local = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/`;
-  const url = (cfg.publicUrlRaw || local) + (token ? `?token=${token}` : '');
+  const rawBase = cfg.publicUrlRaw || local;
+  // Normalise to a trailing slash before appending a query string — publicUrlRaw
+  // is operator-typed (e.g. "https://cctv.corp.example", no trailing slash) and
+  // "https://cctv.corp.example?token=…" is missing the "/" a browser inserts
+  // silently but a person handing the link out sees as broken.
+  const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
+  // A token that came from AGENT_CCTV_TOKEN is the operator's to distribute —
+  // printing it here just puts it in the systemd journal too, readable by
+  // more people than "whoever could ssh here". A freshly minted token has no
+  // other channel, so it still goes in the URL.
+  const showTokenInUrl = token && !cfg.tokenFromEnv;
+  const url = base + (showTokenInUrl ? `?token=${token}` : '');
   console.log('');
   console.log(`  ${c.bold('agent-cctv')} ${c.dim('watching')}`);
   console.log(`  ${c.cyan(url)}`);
+  if (token && cfg.tokenFromEnv) {
+    console.log(`  ${c.dim('token from AGENT_CCTV_TOKEN — share it out of band, not this URL')}`);
+  }
   console.log('');
   console.log(
     `  ${c.dim('claude code')}  ${caps.registry ? c.green('●') : c.yellow('○')} session registry   ` +

@@ -145,3 +145,73 @@ test('an unwritable AGENT_CCTV_HOME (e.g. systemd ProtectSystem=strict without t
     fs.rmSync(blockerDir, { recursive: true, force: true });
   }
 });
+
+/* ── boolean flags must not be order-sensitive (finding 9) ───────────────── */
+
+test('a boolean flag before the subcommand does not swallow it as its value', () => {
+  // Before the fix, `--no-token status` had `--no-token` consume "status" as
+  // its value (flags['no-token'] = 'status'), leaving args._ empty — `cmd`
+  // then silently fell back to its "start" default instead of running
+  // `status`. This would run cmdStart() (which binds a port and never
+  // returns) where the caller asked for cmdStatus() (which prints and exits).
+  // Using "status" rather than "start" makes the wrong dispatch observable
+  // without needing to wait on a live server.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-home-'));
+  const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-claude-'));
+  fs.mkdirSync(path.join(claudeDir, 'projects'), { recursive: true });
+  try {
+    const env = { ...process.env, AGENT_CCTV_HOME: home, AGENT_CCTV_CLAUDE_DIR: claudeDir };
+    delete env.AGENT_CCTV_TOKEN;
+    const r = spawnSync(process.execPath, [CLI, '--no-token', 'status'], {
+      encoding: 'utf8',
+      env,
+      timeout: 10_000,
+    });
+    assert.equal(r.status, 0, `expected a clean exit; stderr: ${r.stderr}`);
+    // cmdStatus()'s banner — cmdStart() prints "watching" instead and never exits.
+    assert.match(r.stdout, /live session/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(claudeDir, { recursive: true, force: true });
+  }
+});
+
+test('--no-token before the subcommand disables the token rather than silently minting one', async () => {
+  // Before the fix, `--no-token` here consumed "start" as its value
+  // (flags['no-token'] = 'start'), which is truthy but not `=== true` — so
+  // resolve()'s `flags['no-token'] === true` check missed it and a token was
+  // minted anyway, defeating the flag entirely.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-home-'));
+  const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-claude-'));
+  fs.mkdirSync(path.join(claudeDir, 'projects'), { recursive: true });
+  const port = 22000 + (process.pid % 5000);
+  const env = { ...process.env, AGENT_CCTV_HOME: home, AGENT_CCTV_CLAUDE_DIR: claudeDir };
+  delete env.AGENT_CCTV_TOKEN;
+  delete env.AGENT_CCTV_HOST;
+  delete env.AGENT_CCTV_PORT;
+  delete env.AGENT_CCTV_PUBLIC_URL;
+
+  const child = spawn(
+    process.execPath,
+    [CLI, '--no-token', 'start', '--port', String(port), '--no-open'],
+    { env, stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d) => (stdout += d));
+  child.stderr.on('data', (d) => (stderr += d));
+
+  try {
+    await waitFor(() => /watching/.test(stdout) || child.exitCode !== null, 5000);
+    assert.equal(child.exitCode, null, `expected the server to be running; stderr: ${stderr}`);
+    assert.doesNotMatch(stdout, /token=/, 'no token should have been minted or printed');
+
+    // No token configured means every endpoint is open.
+    const res = await fetch(`http://127.0.0.1:${port}/api/state`);
+    assert.equal(res.status, 200);
+  } finally {
+    child.kill();
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(claudeDir, { recursive: true, force: true });
+  }
+});
