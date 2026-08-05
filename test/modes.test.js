@@ -249,3 +249,64 @@ test('POST /api/views refuses a nameless view and an invalid one', async () => {
     await s.close();
   }
 });
+
+/* ── the extracted formatters ────────────────────────────────────────────── */
+
+import { plain, since, tokens, took, shortPath } from '../public/format.js';
+import { foldTools } from '../public/timeline.js';
+
+test('plain strips markdown down to the words', () => {
+  assert.equal(plain('# Heading'), 'Heading');
+  assert.equal(plain('**bold** and *em*'), 'bold and em');
+  assert.equal(plain('use `npm test` now'), 'use npm test now');
+  assert.equal(plain('```js\nconst x = 1\n```'), '⟨code⟩');
+  assert.equal(plain('- one\n- two'), '· one · two');
+  assert.equal(plain('see [the docs](http://x)'), 'see the docs');
+  assert.equal(plain(''), '');
+  assert.equal(plain(null), '');
+});
+
+test('since drops seconds past a minute, because flicker means nothing', () => {
+  const now = Date.now();
+  assert.equal(since(now - 45_000), '45s');
+  assert.equal(since(now - 3 * 60_000), '3m');
+  assert.equal(since(now - (2 * 60 + 5) * 60_000), '2h 5m');
+  assert.equal(since(0), '');
+});
+
+test('tokens abbreviates the way the tiles read', () => {
+  assert.equal(tokens(0), '0');
+  assert.equal(tokens(999), '999');
+  assert.equal(tokens(1000), '1k');
+  assert.equal(tokens(222_000), '222k');
+  assert.equal(tokens(1_200_000), '1.2M');
+  assert.equal(tokens(12_000_000), '12M');
+});
+
+test('took stays quiet about sub-second calls', () => {
+  assert.equal(took(null), '');
+  assert.equal(took(40), '');
+  assert.equal(took(1500), '1.5s');
+  assert.equal(took(95_000), '1m 35s');
+});
+
+test('shortPath collapses a home directory', () => {
+  assert.equal(shortPath('/Users/me/code/x'), '~/code/x');
+  assert.equal(shortPath('/home/me/code/x'), '~/code/x');
+  assert.equal(shortPath(''), '');
+});
+
+test('foldTools makes a tool call one row, and leaves an orphan result alone', () => {
+  const folded = foldTools([
+    { id: 'a', kind: 'tool_start', ts: 1, tool: { id: 't1', phase: 'start' }, detail: 'npm test' },
+    { id: 'b', kind: 'tool_end', ts: 2, tool: { id: 't1', phase: 'end', durationMs: 1200 } },
+    { id: 'c', kind: 'tool_end', ts: 3, tool: { id: 't9', phase: 'end' } },
+  ]);
+  assert.equal(folded.length, 2, 'the pair is one row');
+  // The row keeps the call's identity and time, and takes the result's outcome.
+  assert.equal(folded[0].id, 'a');
+  assert.equal(folded[0].ts, 1);
+  assert.equal(folded[0].detail, 'npm test', 'a result with no detail keeps the call’s');
+  assert.equal(folded[0].tool.durationMs, 1200);
+  assert.equal(folded[1].id, 'c', 'a result with no start still gets a row');
+});
