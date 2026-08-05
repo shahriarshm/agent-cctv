@@ -1,0 +1,26 @@
+[Unit]
+Description=agent-cctv — live wall of coding agent sessions
+After=network.target
+
+[Service]
+Type=simple
+# Run as the account the agents run as, or one sharing its group.
+# Never root: this process serves file contents over HTTP.
+User=agents
+Group=agents
+EnvironmentFile=/etc/agent-cctv/agent-cctv.env
+ExecStart=/usr/bin/npx --yes agent-cctv start --no-open
+Restart=on-failure
+RestartSec=5
+
+# It only ever reads. Give it nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

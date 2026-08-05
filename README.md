@@ -193,6 +193,78 @@ The dashboard serves your transcripts, which contain your source code. So:
 
 Nothing leaves your machine and nothing is written outside `~/.agent-cctv`.
 
+## Running it for a team
+
+agent-cctv works on a shared server — a CI box, a cloud dev machine, an agent
+fleet — as long as the agents run on that same machine. There is no separate
+mode: it is two environment variables and a systemd unit.
+
+```sh
+AGENT_CCTV_TOKEN=$(openssl rand -hex 32)
+AGENT_CCTV_PUBLIC_URL=https://cctv.corp.example
+```
+
+Everything you need is in [`deploy/`](deploy/): a systemd unit, an environment
+file, and reverse-proxy examples for Caddy and nginx + oauth2-proxy.
+
+### The trust model, stated plainly
+
+**Everyone who can reach agent-cctv can read every session's full transcript,
+including source code. There is no per-user filtering.**
+
+That is deliberate. It is an observability wall; seeing the whole wall is the
+point. It is also the honest boundary — the process can read every transcript on
+the box anyway, so a per-user filter would be decoration that someone would
+eventually mistake for a security control.
+
+So: **scope access to people who could already `ssh` to this box.** If you need
+real isolation between teams, run two instances over different directories.
+
+agent-cctv authenticates with a single shared token and nothing else. Your
+reverse proxy authenticates the *human* — SSO, oauth2-proxy, Cloudflare Access,
+whatever you already run — and terminates TLS. agent-cctv ships no TLS and no
+user accounts, and it never will: they are your proxy's job, and it already does
+them better.
+
+Keep the bind on `127.0.0.1`. The proxy is on the same box, because the agents
+are. agent-cctv refuses to start if you bind a public interface without a token.
+It also refuses to start if `AGENT_CCTV_PUBLIC_URL` is set and no token is
+configured, even on a loopback bind — a public URL means a reverse proxy is
+making this reachable beyond this machine, which is the same exposure as a
+non-loopback bind.
+
+### Retention
+
+agent-cctv still stores nothing. The agents' own JSONL logs are the durable
+record, and on this topology they are on the same disk.
+
+- The history window is whatever Claude Code keeps — see `cleanupPeriodDays` in
+  its settings, default about 30 days. Change it there, not here.
+- For real retention or analytics, point the log shipper you already run (Vector,
+  Filebeat) at `~/.claude/projects/**/*.jsonl`. agent-cctv does not need to be in
+  that path.
+
+### Operating it
+
+- **Never run it as root.** It serves file contents over HTTP. Run it as the
+  account the agents use, or one sharing that group. Liveness checks work fine
+  unprivileged.
+- **Pin your Claude Code version, and alert on degradation.** The internals it
+  reads are undocumented. `GET /api/health` needs no token and returns
+  `capabilities`; alert on `capabilities['claude-code'].registry === false`,
+  which means an update moved something and the wall is about to go stale.
+- **Docker is not supported as the primary path.** Without `--pid=host` the
+  liveness check fails for every host pid and every session reads as dead —
+  it destroys the one authoritative signal the tool has. Use npm + systemd.
+- **Agents inside containers are out of scope.** Their state directory is
+  invisible and their pids are in another namespace.
+- **Hooks and the daemon must share a user.** `agent-cctv start` writes the
+  token to `~/.agent-cctv/config.json` (mode 0600); hooks (added by
+  `agent-cctv install`) read it from there to authenticate to `/ingest`. If the
+  dashboard runs as a different user than the agents, hooks cannot read that
+  file and cannot authenticate. Hooks are optional; this only matters if you
+  install them.
+
 ## Codex, and what a second agent costs
 
 Codex CLI sessions appear on the same wall, from `~/.codex/sessions/`. They give

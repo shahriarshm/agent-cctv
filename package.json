@@ -11,6 +11,7 @@
     "bin",
     "src",
     "public",
+    "deploy",
     "README.md"
   ],
   "engines": {
