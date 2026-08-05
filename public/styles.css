@@ -195,8 +195,16 @@ body[data-locked='true'] {
 
 .masthead {
   display: flex;
+  /* Wrap on fit, not on a guessed breakpoint. The labels inside deliberately
+     never wrap (see .readout span), so the row has a hard minimum width — tying
+     the wrap to a fixed media query left a band of window sizes where the header
+     was too wide to fit and too wide to wrap, and the whole page scrolled
+     sideways. A second header row is a far better failure than that. */
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s4);
+  /* after the `gap` shorthand, which would otherwise reset it */
+  row-gap: var(--s2);
   padding: var(--s2) var(--s4);
   border-bottom: 1px solid var(--edge);
   background: var(--panel);
@@ -1418,10 +1426,8 @@ body[data-stale='true'] .archive {
 /* ── responsive & motion ──────────────────────────────────────────────── */
 
 @media (max-width: 1100px) {
-  .masthead {
-    flex-wrap: wrap;
-    row-gap: var(--s2);
-  }
+  /* .masthead wraps at every width now, so only the spacer is breakpoint-bound:
+     once the header has wrapped there is nothing left to push apart. */
   .masthead-spacer {
     display: none;
   }
