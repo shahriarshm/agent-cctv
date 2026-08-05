@@ -235,9 +235,11 @@ holding it.
   `ps` walk in `src/liveness.js` compound it. npm + systemd is primary; Docker is documented
   as "requires `--pid=host` and a matching uid", or not at all.
 - **Never run as root.** This process serves file contents over HTTP; root turns any path
-  bug into a full-disk read. Run as the agent account, or a user sharing its group.
-  `src/liveness.js:51` already treats `EPERM` as alive, so cross-user `kill(pid, 0)` works
-  unprivileged.
+  bug into a full-disk read. Run as **the same account the agents run as** — not merely one
+  sharing its group. `src/paths.js` resolves `CLAUDE_DIR` from `os.homedir()`, so a
+  different account looks in the wrong home entirely, finds nothing, and exits. (Corrected
+  during implementation: this section originally said "or a user sharing its group", which
+  does not work until multi-root support lands in release 2.)
 - **Silent degradation is worse on a server.** A Claude Code auto-update moving the
   undocumented internals turns the wall stale for a whole team, none of whom ran `doctor`.
   Document: pin the Claude Code version, and alert on
@@ -249,6 +251,35 @@ holding it.
 - **Hook/daemon uid split.** `src/hook.js` reads the token from `~/.agent-cctv/config.json`
   (mode 0600). If the daemon runs as a different user than the agent, hooks cannot
   authenticate. Acceptable — hooks are opt-in and rarely needed — but document it.
+
+## Known limitations at release
+
+Carried forward deliberately. Each was found during implementation, judged not worth fixing
+in release 1, and is recorded here because the working notes live outside git.
+
+- **A stale bookmarked token shows the wrong error.** The SPA sets its auth-failure message
+  only when the URL carries no token at all. A bookmark holding a token the operator has
+  since rotated falls into the normal path and shows the generic "signal lost" wall instead
+  of saying the credential is bad.
+- **Hooks cannot find the token under the systemd deployment.** The unit redirects
+  `AGENT_CCTV_HOME` to its `StateDirectory` (`/var/lib/agent-cctv`), so `src/hook.js`,
+  which looks in `~/.agent-cctv`, will not find it unless the agent's shell exports the same
+  variable. Hooks are opt-in; documented in the README.
+- **A hand-rolled reverse proxy that rewrites `Host` to `localhost` upstream** would let a
+  tokenless loopback deployment serve transcripts to the network. No refusal rule can detect
+  this. The shipped Caddy and nginx examples forward the original host and so fail closed.
+- **`resolve()` treats port `0` as falsy**, so an ephemeral port cannot be requested. Mirrors
+  the pre-existing `resolvePort()` convention in `src/paths.js`.
+- **`hostname()` does not validate what follows a closing bracket**, so a `Host` of
+  `[X]garbage` reduces to `X`. Not exploitable — `req.headers.host` is read nowhere else —
+  but worth tightening before any host-based routing is added.
+- **The SPA innerHTML guard is a tripwire, not a proof.** Its scan misses
+  `el.innerHTML += x` and `el['innerHTML'] = x`. Neither form exists today; catching them
+  properly needs an AST parser, which is disproportionate here.
+- **A wrapped masthead can show a stray divider** at the start of its second row. CSS has no
+  "first in flex line" selector, so a real fix means restructuring the header.
+- **`validate()` demands a token when `AGENT_CCTV_PUBLIC_URL` points at loopback**, which is
+  stricter than necessary. A false positive in the safe direction.
 - **SSE fan-out** is O(clients × events) (`src/server.js:81-91`) and a busy fleet is chatty.
   Fine at release-1 scale; measure before optimizing.
 - **Containerized agents are out of scope.** If each agent runs in its own container its
