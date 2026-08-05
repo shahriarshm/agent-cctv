@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import process from 'node:process';
-import { start, newToken } from '../src/server.js';
+import { start } from '../src/server.js';
 import { Store } from '../src/store.js';
+import { resolve, validate, ConfigError } from '../src/config.js';
 import { capabilities } from '../src/sources/claude-code/index.js';
 import { capabilities as codexCaps } from '../src/sources/codex/index.js';
 import { writeConfig, readConfig, DEFAULT_PORT, DEFAULT_HOST } from '../src/paths.js';
@@ -48,9 +49,16 @@ ${c.bold('Options')}
   --host <addr>    Bind address                ${c.dim(`(default ${DEFAULT_HOST}, loopback only)`)}
   --no-open        Don't open a browser
   --no-token       Skip the URL token          ${c.dim('(only if nothing else runs on this machine)')}
+  --public-url <url>  Public URL when behind a reverse proxy ${c.dim('(adds its host to the allowlist)')}
   --project        install/uninstall into ./.claude/settings.json instead of global
 
 ${c.dim('No installation is required to watch Claude Code — just run it.')}
+
+${c.bold('Environment')}
+  AGENT_CCTV_TOKEN       Stable token, 16+ chars ${c.dim('(otherwise a random one per run)')}
+  AGENT_CCTV_PUBLIC_URL  Public URL when behind a reverse proxy
+  AGENT_CCTV_HOST        Bind address
+  AGENT_CCTV_PORT        Port
 `;
 
 function openBrowser(url) {
@@ -71,13 +79,34 @@ async function cmdStart(flags) {
     return;
   }
 
-  const port = Number(flags.port) || DEFAULT_PORT;
-  const host = flags.host || DEFAULT_HOST;
-  const token = flags.token === false || flags['no-token'] ? null : newToken();
+  let cfg;
+  try {
+    for (const name of ['host', 'port', 'public-url']) {
+      if (flags[name] === true) {
+        throw new ConfigError(`--${name} requires a value.`);
+      }
+    }
+    cfg = validate(resolve({ flags }));
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    console.error('');
+    console.error(`  ${c.red('✗')} ${err.message}`);
+    console.error('');
+    process.exitCode = 1;
+    return;
+  }
+  const { port, host, token } = cfg;
 
   let server;
   try {
-    server = await start({ port, host, store: new Store(), token });
+    server = await start({
+      port,
+      host,
+      store: new Store(),
+      token,
+      allowedHosts: cfg.allowedHosts,
+      secureCookie: cfg.secureCookie,
+    });
   } catch (err) {
     if (err.code === 'EADDRINUSE') {
       console.error(c.red(`Port ${port} is busy.`), c.dim('Is agent-cctv already running?'));
@@ -90,7 +119,8 @@ async function cmdStart(flags) {
 
   writeConfig({ port, host, token, startedAt: Date.now(), pid: process.pid });
 
-  const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/${token ? `?token=${token}` : ''}`;
+  const local = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/`;
+  const url = (cfg.publicUrlRaw || local) + (token ? `?token=${token}` : '');
   console.log('');
   console.log(`  ${c.bold('agent-cctv')} ${c.dim('watching')}`);
   console.log(`  ${c.cyan(url)}`);
@@ -113,7 +143,7 @@ async function cmdStart(flags) {
   console.log(c.dim('  ctrl-c to stop'));
   console.log('');
 
-  if (!flags['no-open'] && flags.open !== false) openBrowser(url);
+  if (cfg.openBrowser) openBrowser(url);
 
   const shutdown = () => {
     console.log(c.dim('\n  stopping…'));
