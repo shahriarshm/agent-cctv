@@ -26,6 +26,8 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
+const COOKIE_NAME = 'cctv';
+
 /**
  * The dashboard streams source code out of transcripts, so loopback alone is not
  * a security boundary: any page in the browser can POST to 127.0.0.1, and a
@@ -84,6 +86,7 @@ export function createServer({
   token = null,
   withSource = true,
   allowedHosts = ['localhost', '127.0.0.1', '::1'],
+  secureCookie = false,
 } = {}) {
   // Do NOT run these through hostname(): that function strips a :port, and a
   // bare '::1' would reduce to '' — silently dropping loopback from its own
@@ -121,9 +124,42 @@ export function createServer({
     store.capabilities = { [CLAUDE]: capabilities(), [CODEX]: codexCapabilities() };
   }
 
+  /** Constant-time compare — this is a shared secret on a network-reachable port. */
+  function sameSecret(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const A = Buffer.from(a);
+    const B = Buffer.from(b);
+    if (A.length !== B.length) return false;
+    return crypto.timingSafeEqual(A, B);
+  }
+
+  function cookieToken(req) {
+    const raw = req.headers.cookie;
+    if (!raw) return null;
+    for (const part of raw.split(';')) {
+      const eq = part.indexOf('=');
+      if (eq < 0) continue;
+      if (part.slice(0, eq).trim() !== COOKIE_NAME) continue;
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /** Which credential authenticated this request, or null. */
+  function authSource(req, url) {
+    if (!token) return 'open';
+    if (sameSecret(url.searchParams.get('token'), token)) return 'query';
+    if (sameSecret(req.headers['x-cctv-token'], token)) return 'header';
+    if (sameSecret(cookieToken(req), token)) return 'cookie';
+    return null;
+  }
+
   function authed(req, url) {
-    if (!token) return true;
-    return url.searchParams.get('token') === token || req.headers['x-cctv-token'] === token;
+    return authSource(req, url) !== null;
   }
 
   const server = http.createServer(async (req, res) => {
@@ -132,6 +168,18 @@ export function createServer({
 
     const url = new URL(req.url, 'http://localhost');
     const route = url.pathname;
+
+    // Swap a URL or header token for a cookie once, so the token stops appearing
+    // in the query string of every request — including the long-lived SSE stream,
+    // which EventSource cannot send headers on.
+    const credential = authSource(req, url);
+    if (credential === 'query' || credential === 'header') {
+      res.setHeader(
+        'set-cookie',
+        `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict` +
+          (secureCookie ? '; Secure' : '')
+      );
+    }
 
     // Optional hook ingestion. Enrichment only — the registry still wins on state.
     if (route === '/ingest' && req.method === 'POST') {
@@ -283,9 +331,9 @@ function drainSpool(store) {
 
 export { newToken } from './config.js';
 
-export function start({ port = DEFAULT_PORT, host = DEFAULT_HOST, store, token, allowedHosts } = {}) {
+export function start({ port = DEFAULT_PORT, host = DEFAULT_HOST, store, token, allowedHosts, secureCookie } = {}) {
   return new Promise((resolve, reject) => {
-    const server = createServer({ store, token, allowedHosts });
+    const server = createServer({ store, token, allowedHosts, secureCookie });
     server.once('error', reject);
     server.listen(port, host, () => resolve(server));
   });

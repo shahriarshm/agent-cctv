@@ -6,7 +6,25 @@
 */
 
 const token = new URLSearchParams(location.search).get('token') || '';
-const api = (p) => p + (token ? (p.includes('?') ? '&' : '?') + 'token=' + token : '');
+/*
+  The document request already carried the token, so the server has issued an
+  HttpOnly cookie. Probe once without the token: if the cookie works we stop
+  sending it entirely and scrub it from the address bar, which keeps it out of
+  proxy access logs. If cookies are blocked we fall back to the query string.
+*/
+let useCookie = false;
+const api = (p) => (useCookie || !token ? p : p + (p.includes('?') ? '&' : '?') + 'token=' + token);
+
+async function establishSession() {
+  if (!token) return;
+  try {
+    const probe = await fetch('/api/state', { credentials: 'same-origin' });
+    useCookie = probe.ok;
+  } catch {
+    useCookie = false;
+  }
+  if (useCookie) history.replaceState(null, '', location.pathname);
+}
 
 const wall = document.getElementById('wall');
 const link = document.getElementById('link');
@@ -1195,4 +1213,4 @@ function connect() {
 }
 
 layout();
-connect();
+establishSession().then(connect);

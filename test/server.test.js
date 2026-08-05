@@ -167,3 +167,86 @@ test('a configured public Origin is accepted', async () => {
     await s.close();
   }
 });
+
+/* ── cookie auth ───────────────────────────────────────────────────────── */
+
+function cookieFrom(res) {
+  const raw = res.headers.get('set-cookie');
+  return raw ? raw.split(';')[0] : null;
+}
+
+test('a query-string auth exchanges the token for a cookie', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url(`/api/state?token=${TOKEN}`));
+    assert.equal(res.status, 200);
+    const set = res.headers.get('set-cookie');
+    assert.ok(set, 'expected a Set-Cookie header');
+    assert.match(set, /^cctv=/);
+    assert.match(set, /HttpOnly/i);
+    assert.match(set, /SameSite=Strict/i);
+  } finally {
+    await s.close();
+  }
+});
+
+test('the cookie alone authorizes a later request', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const first = await fetch(s.url(`/api/state?token=${TOKEN}`));
+    const res = await fetch(s.url('/api/state'), { headers: { cookie: cookieFrom(first) } });
+    assert.equal(res.status, 200);
+  } finally {
+    await s.close();
+  }
+});
+
+test('a wrong cookie does not authorize', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url('/api/state'), { headers: { cookie: 'cctv=nope' } });
+    assert.equal(res.status, 401);
+  } finally {
+    await s.close();
+  }
+});
+
+test('Secure is set only when the deployment is https', async () => {
+  const plain = await serve({ token: TOKEN, secureCookie: false });
+  try {
+    const res = await fetch(plain.url(`/api/state?token=${TOKEN}`));
+    assert.doesNotMatch(res.headers.get('set-cookie'), /Secure/i);
+  } finally {
+    await plain.close();
+  }
+
+  const tls = await serve({ token: TOKEN, secureCookie: true });
+  try {
+    const res = await fetch(tls.url(`/api/state?token=${TOKEN}`));
+    assert.match(res.headers.get('set-cookie'), /Secure/i);
+  } finally {
+    await tls.close();
+  }
+});
+
+test('loading the page with a token sets the cookie before any API call', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url(`/?token=${TOKEN}`));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('set-cookie') || '', /^cctv=/);
+  } finally {
+    await s.close();
+  }
+});
+
+test('an already-cookied request is not re-issued a cookie', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const first = await fetch(s.url(`/api/state?token=${TOKEN}`));
+    const res = await fetch(s.url('/api/state'), { headers: { cookie: cookieFrom(first) } });
+    assert.equal(res.headers.get('set-cookie'), null);
+  } finally {
+    await s.close();
+  }
+});
