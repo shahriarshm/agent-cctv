@@ -82,7 +82,7 @@ async function cmdStart(flags) {
   let cfg;
   try {
     for (const name of ['host', 'port', 'public-url']) {
-      if (flags[name] === true) {
+      if (flags[name] === true || flags[name] === '') {
         throw new ConfigError(`--${name} requires a value.`);
       }
     }
