@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
-npm test                                          # whole suite (node --test, 242 tests)
+npm test                                          # whole suite (node --test, 261 tests)
 node --test test/views.test.js                    # one file
 node --test --test-name-pattern "mode defaults"   # one test, by name
 
@@ -21,6 +21,7 @@ which shutdown needs), ESM throughout.
 
 Point the reader at fixtures instead of a real home directory with
 `AGENT_CCTV_HOME`, `AGENT_CCTV_CLAUDE_DIR`, `AGENT_CCTV_CODEX_DIR`,
+`AGENT_CCTV_GEMINI_DIR`, `AGENT_CCTV_OPENCODE_DIR`, `AGENT_CCTV_HERMES_DIR`,
 `AGENT_CCTV_VIEWS_DIR`. `src/paths.js` reads these at module load, which is why
 `test/helpers/env.js` must be the **first** import in any test that touches
 `src/` — ESM evaluates imports in source order.
@@ -46,6 +47,18 @@ JSONL log: per-file byte offsets, a line split across two reads, joining mid-fil
 without choking on the leading fragment, truncate-and-replace detection. A source
 subclasses it and fills in four hooks — `sessionIdFor`, `initState`, `toEvents`,
 `collectMeta`. Transcripts run to tens of MB; nothing here may ever read one whole.
+Gemini rides this too; its op-log wrinkle is that a streaming re-append of the
+same message id can carry *more* than the line before it, so text dedupes on the
+message id but tool calls dedupe on the call id.
+
+`src/sqlite-poll.js` is the sqlite counterpart, for agents that keep sessions in
+a database instead (OpenCode's `opencode.db`, Hermes's `state.db`): `node:sqlite`
+behind a lazy capability gate (absent on Node < 22.13 — the source reports
+unavailable and the wall runs on), read-only open, ~2 s polling because WAL
+commits don't reliably touch the db file, and retry-not-crash when the file is
+deleted or migrated mid-poll. The adapter supplies queries and row→event mapping;
+subagent rows (`parent_id` / `parent_session_id`) and Hermes's non-CLI gateway
+sessions are filtered in the query, never downstream.
 
 Claude Code and Codex are **not** symmetric, and the asymmetry is load-bearing:
 Claude Code has `~/.claude/sessions/<pid>.json` (pid, cwd, `busy|idle|waiting`

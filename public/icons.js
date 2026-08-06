@@ -50,6 +50,18 @@ export const SOURCES = {
     // simple-icons publishes no OpenAI mark, so this is a neutral placeholder.
     icon: svg('M12 2.1 21 7.05v9.9L12 21.9 3 16.95v-9.9Zm0 2.28L5 8.22v7.56l7 3.84 7-3.84V8.22Z'),
   },
+  opencode: {
+    label: 'OpenCode',
+    // No simple-icons mark either; a terminal frame with a prompt reads right.
+    icon: svg(
+      'M2.5 4.5h19a.5.5 0 0 1 .5.5v14a.5.5 0 0 1-.5.5h-19a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5ZM3.5 6v12h17V6Zm3.06 2.94L10.62 13l-4.06 4.06L5.5 16l3-3-3-3Zm5.94 6.56H17V17h-4.5Z'
+    ),
+  },
+  hermes: {
+    label: 'Hermes',
+    // Nous Research publishes no mark in simple-icons; a plain bold H stands in.
+    icon: svg('M5.5 3.5h3v7h7v-7h3v17h-3v-7h-7v7h-3Z'),
+  },
 };
 
 export const UNKNOWN_SOURCE = {

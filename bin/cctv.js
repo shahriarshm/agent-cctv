@@ -10,6 +10,9 @@ import { Store } from '../src/store.js';
 import { resolve, validate, ConfigError } from '../src/config.js';
 import { capabilities } from '../src/sources/claude-code/index.js';
 import { capabilities as codexCaps } from '../src/sources/codex/index.js';
+import { capabilities as geminiCaps } from '../src/sources/gemini/index.js';
+import { capabilities as opencodeCaps } from '../src/sources/opencode/index.js';
+import { capabilities as hermesCaps } from '../src/sources/hermes/index.js';
 import { writeConfig, readConfig, CONFIG_FILE, DEFAULT_PORT, DEFAULT_HOST } from '../src/paths.js';
 import * as installer from '../src/install.js';
 import { loadViews } from '../src/views.js';
@@ -168,10 +171,10 @@ async function confirmPublish(cfg) {
 
 async function cmdStart(flags) {
   const caps = capabilities();
-  const codex = codexCaps();
-  if (!caps.transcripts && !caps.registry && !codex.rollouts) {
-    console.error(c.red('No agent data found at ~/.claude or ~/.codex.'));
-    console.error(c.dim('Nothing to watch yet. Start a Claude Code or Codex session and try again.'));
+  const others = [codexCaps().rollouts, geminiCaps().chats, opencodeCaps().db, hermesCaps().db];
+  if (!caps.transcripts && !caps.registry && !others.some(Boolean)) {
+    console.error(c.red('No agent data found (~/.claude, ~/.codex, ~/.gemini, opencode, ~/.hermes).'));
+    console.error(c.dim('Nothing to watch yet. Start an agent session and try again.'));
     process.exitCode = 1;
     return;
   }
@@ -332,10 +335,23 @@ async function cmdStart(flags) {
       `${caps.transcripts ? c.green('●') : c.yellow('○')} transcripts   ` +
       `${caps.tasks ? c.green('●') : c.yellow('○')} tasks`
   );
+  const codex = codexCaps();
   console.log(
     `  ${c.dim('codex')}        ${codex.rollouts ? c.green('●') : c.yellow('○')} rollouts   ` +
       `${codex.index ? c.green('●') : c.yellow('○')} thread names   ` +
       `${c.dim('○ no registry — state inferred')}`
+  );
+  const opencode = opencodeCaps();
+  const hermes = hermesCaps();
+  // A dot per agent found; the ones this machine has never run stay quiet.
+  const sqliteDot = (o) => (o.db && o.sqlite ? c.green('●') : o.db ? c.yellow('○') : c.dim('○'));
+  console.log(
+    `  ${c.dim('others')}       ${geminiCaps().chats ? c.green('●') : c.dim('○')} gemini   ` +
+      `${sqliteDot(opencode)} opencode   ` +
+      `${sqliteDot(hermes)} hermes` +
+      ((opencode.db && opencode.sqlite === false) || (hermes.db && hermes.sqlite === false)
+        ? c.yellow('   ! node:sqlite needs Node ≥ 22.13')
+        : '')
   );
   if (!caps.registry) {
     console.log(
@@ -391,6 +407,9 @@ async function cmdStatus() {
       `transcripts ${caps.transcripts ? c.green('yes') : c.red('no')} · ` +
       `tasks ${caps.tasks ? c.green('yes') : c.red('no')} · ` +
       `codex ${codexCaps().rollouts ? c.green('yes') : c.red('no')} · ` +
+      `gemini ${geminiCaps().chats ? c.green('yes') : c.red('no')} · ` +
+      `opencode ${opencodeCaps().db ? c.green('yes') : c.red('no')} · ` +
+      `hermes ${hermesCaps().db ? c.green('yes') : c.red('no')} · ` +
       `hooks ${hooks.installed.length ? c.green(`${hooks.installed.length}/9`) : c.dim('not installed (optional)')}`
   );
   const cfg = readConfig();
@@ -435,12 +454,21 @@ function cmdUninstall(flags) {
 function cmdDoctor() {
   const caps = capabilities();
   const codex = codexCaps();
+  const gemini = geminiCaps();
+  const opencode = opencodeCaps();
+  const hermes = hermesCaps();
+  /** A database we can see but this Node cannot read deserves its own words. */
+  const sqliteWhy = (o, what) =>
+    o.db && o.sqlite === false ? `${what} found, but node:sqlite needs Node ≥ 22.13` : `${what} (no status — state inferred)`;
   const rows = [
     ['~/.claude/sessions', caps.registry, 'live status, pid, cwd (authoritative)'],
     ['~/.claude/projects', caps.transcripts, 'activity stream'],
     ['~/.claude/tasks', caps.tasks, 'per-session task lists'],
     ['~/.codex/sessions', codex.rollouts, 'codex activity (no status — state inferred)'],
     ['~/.codex/session_index', codex.index, 'codex thread names'],
+    ['~/.gemini/tmp', gemini.chats, 'gemini chats (no status — state inferred)'],
+    ['opencode.db', opencode.db && opencode.sqlite !== false, sqliteWhy(opencode, 'opencode sessions')],
+    ['~/.hermes/state.db', hermes.db && hermes.sqlite !== false, sqliteWhy(hermes, 'hermes sessions')],
   ];
   console.log('');
   for (const [pathName, ok, why] of rows) {

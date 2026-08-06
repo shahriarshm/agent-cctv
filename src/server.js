@@ -8,6 +8,9 @@ import { SPOOL_FILE, DEFAULT_HOST, DEFAULT_PORT } from './paths.js';
 import { safeJson } from './util.js';
 import { ClaudeCodeSource, capabilities, SOURCE as CLAUDE } from './sources/claude-code/index.js';
 import { CodexSource, capabilities as codexCapabilities, SOURCE as CODEX } from './sources/codex/index.js';
+import { GeminiSource, capabilities as geminiCapabilities, SOURCE as GEMINI } from './sources/gemini/index.js';
+import { OpencodeSource, capabilities as opencodeCapabilities, SOURCE as OPENCODE } from './sources/opencode/index.js';
+import { HermesSource, capabilities as hermesCapabilities, SOURCE as HERMES } from './sources/hermes/index.js';
 import { fromHook } from './sources/claude-code/hooks.js';
 import { readTasks } from './sources/claude-code/tasks.js';
 import { listSessions, loadSession } from './history.js';
@@ -148,11 +151,23 @@ export function createServer({
   /** Every source is just a thing that emits `{sessionId, patch, events}`. */
   let sources = [];
   if (withSource) {
-    sources = [new ClaudeCodeSource(), new CodexSource()];
+    sources = [
+      new ClaudeCodeSource(),
+      new CodexSource(),
+      new GeminiSource(),
+      new OpencodeSource(),
+      new HermesSource(),
+    ];
     for (const s of sources) s.on('update', (u) => store.apply(u));
     // Keyed by source: authority over a session's state belongs to whichever
     // agent produced it, and they do not all have the same reach.
-    store.capabilities = { [CLAUDE]: capabilities(), [CODEX]: codexCapabilities() };
+    store.capabilities = {
+      [CLAUDE]: capabilities(),
+      [CODEX]: codexCapabilities(),
+      [GEMINI]: geminiCapabilities(),
+      [OPENCODE]: opencodeCapabilities(),
+      [HERMES]: hermesCapabilities(),
+    };
   }
 
   /** Constant-time compare — this is a shared secret on a network-reachable port. */
