@@ -240,6 +240,21 @@
       </div>
 
       <div class="bar-status">
+        <!--
+          Present only while a tunnel is up, which is why it lives inside this
+          region instead of becoming a seventh one. A new region would need its
+          own shed tier and its own hairline in the ::before list, to display
+          something that is absent almost all of the time.
+        -->
+        <div class="public-badge" id="public-badge" hidden>
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M3.5 12h17" />
+            <path d="M12 3.5a13 13 0 0 1 0 17" />
+            <path d="M12 3.5a13 13 0 0 0 0 17" />
+          </svg>
+          <span class="clips" id="public-host">public</span>
+        </div>
         <div class="clock" id="clock">--:--:--</div>
         <div class="link-state" id="link" data-up="false"><span class="clips">connecting</span></div>
       </div>

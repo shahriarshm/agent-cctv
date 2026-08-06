@@ -47,6 +47,8 @@ async function establishSession() {
 const wall = document.getElementById('wall');
 const link = document.getElementById('link');
 const clockEl = document.getElementById('clock');
+const publicBadge = document.getElementById('public-badge');
+const publicHost = document.getElementById('public-host');
 const inspector = document.getElementById('inspector');
 const timelineEl = document.getElementById('timeline');
 const metaEl = document.getElementById('inspector-meta');
@@ -1264,6 +1266,23 @@ function setLink(word, title) {
   link.title = title || word;
 }
 
+/*
+  The wall says nothing about who can see it, which is fine while the answer is
+  "this machine". Once a tunnel is up the answer is "anyone with the link", and
+  the person staring at the wall all day is the one most likely to forget that
+  they opened one an hour ago.
+
+  It comes off the authenticated stream rather than /api/health, which needs no
+  credential: nothing a viewer is shown should depend on an endpoint anyone can
+  read.
+*/
+function setTunnel(t) {
+  publicBadge.hidden = !t;
+  if (!t) return;
+  publicHost.textContent = t.host || 'public';
+  publicBadge.title = `Published at ${t.url || t.host} — anyone with the link and its token can read these sessions.`;
+}
+
 function connect() {
   if (authFailed) {
     // No point opening an EventSource that will just 401 and retry forever —
@@ -1304,6 +1323,9 @@ function connect() {
 
   es.addEventListener('snapshot', (e) => {
     const data = JSON.parse(e.data);
+    // Every snapshot, not just the first: a reconnect may be to a server whose
+    // tunnel opened or closed while the stream was down.
+    setTunnel(data.tunnel);
     for (const id of [...sessions.keys()]) {
       if (!data.sessions.some((s) => s.id === id)) remove(id);
     }
@@ -1333,6 +1355,8 @@ function connect() {
   });
 
   es.addEventListener('removed', (e) => remove(JSON.parse(e.data).id));
+
+  es.addEventListener('tunnel', (e) => setTunnel(JSON.parse(e.data)));
 
   es.addEventListener('views', (e) => {
     const before = currentView().id;

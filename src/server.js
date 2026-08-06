@@ -47,15 +47,17 @@ function hostname(value) {
   return h.split(':')[0];
 }
 
-function hostAllowed(req, allowed) {
-  return allowed.has(hostname(req.headers.host));
+function hostAllowed(req, allowed, tunnelHost) {
+  const h = hostname(req.headers.host);
+  return allowed.has(h) || (!!tunnelHost && h === tunnelHost);
 }
 
-function originAllowed(req, allowed) {
+function originAllowed(req, allowed, tunnelHost) {
   const origin = req.headers.origin;
   if (!origin) return true; // same-origin navigations and curl send none
   try {
-    return allowed.has(hostname(new URL(origin).hostname));
+    const h = hostname(new URL(origin).hostname);
+    return allowed.has(h) || (!!tunnelHost && h === tunnelHost);
   } catch {
     return false;
   }
@@ -101,6 +103,17 @@ export function createServer({
   const allowed = new Set(
     allowedHosts.map((h) => String(h).trim().toLowerCase().replace(/^\[|\]$/g, ''))
   );
+
+  /*
+    One slot, not another entry in the Set above.
+
+    A tunnel's hostname does not exist until its child process prints it, and a
+    re-opened quick tunnel comes back on a different one — so a Set would
+    accumulate dead hostnames across restarts, and a bug in the remove path
+    could evict loopback from its own allowlist. A slot can do neither: it
+    holds one hostname or nothing, and setTunnel(null) is the whole teardown.
+  */
+  let tunnel = null;
 
   /** @type {Set<import('node:http').ServerResponse>} */
   const clients = new Set();
@@ -189,9 +202,26 @@ export function createServer({
     return authSource(req, url) !== null;
   }
 
+  /*
+    Secure is decided per request, not once per process. With a tunnel up, the
+    same server answers https at the tunnel's edge and plain http on loopback
+    in the same run: an unconditional Secure would never reach a local browser,
+    and an unconditional plain cookie would travel a public URL without it.
+
+    The request's own Host is what tells us which of the two we are on.
+    X-Forwarded-Proto would mean believing whoever sent it.
+  */
+  function secureFor(req) {
+    if (tunnel?.host && hostname(req.headers.host) === tunnel.host) return true;
+    return secureCookie;
+  }
+
+  /** The store is about sessions, and a tunnel is not one. Merged here. */
+  const snapshot = () => ({ ...store.snapshot(), tunnel });
+
   const server = http.createServer(async (req, res) => {
-    if (!hostAllowed(req, allowed)) return json(res, 403, { error: 'bad host' });
-    if (!originAllowed(req, allowed)) return json(res, 403, { error: 'bad origin' });
+    if (!hostAllowed(req, allowed, tunnel?.host)) return json(res, 403, { error: 'bad host' });
+    if (!originAllowed(req, allowed, tunnel?.host)) return json(res, 403, { error: 'bad origin' });
 
     const url = new URL(req.url, 'http://localhost');
     const route = url.pathname;
@@ -204,7 +234,7 @@ export function createServer({
       res.setHeader(
         'set-cookie',
         `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}` +
-          (secureCookie ? '; Secure' : '')
+          (secureFor(req) ? '; Secure' : '')
       );
     }
 
@@ -227,8 +257,15 @@ export function createServer({
     if (route === '/api/health') {
       // Unauthenticated on purpose: load balancers and alerting rules need it.
       // `capabilities` is included so operators can alert on a Claude Code
-      // update having moved the internals out from under us.
-      return json(res, 200, { ok: true, capabilities: store.capabilities });
+      // update having moved the internals out from under us; `tunnel` so they
+      // can alert on a box that is unexpectedly publishing. The URL is left
+      // out — that a tunnel exists is an operational fact, and its address is
+      // half of the credential for reaching it.
+      return json(res, 200, {
+        ok: true,
+        capabilities: store.capabilities,
+        tunnel: tunnel ? { provider: tunnel.provider, since: tunnel.since } : null,
+      });
     }
 
     // Everything below returns session content.
@@ -236,7 +273,7 @@ export function createServer({
       return json(res, 401, { error: 'token required' });
     }
 
-    if (route === '/api/state') return json(res, 200, store.snapshot());
+    if (route === '/api/state') return json(res, 200, snapshot());
 
     if (route === '/api/views' && req.method === 'POST') {
       // The only endpoint that writes anything a person will read back. Its
@@ -299,7 +336,7 @@ export function createServer({
         'x-accel-buffering': 'no',
       });
       res.write('retry: 2000\n\n');
-      res.write(`event: snapshot\ndata: ${JSON.stringify(store.snapshot())}\n\n`);
+      res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot())}\n\n`);
       clients.add(res);
       const ping = setInterval(() => {
         try {
@@ -359,6 +396,18 @@ export function createServer({
   server.sources = sources;
   server.clientCount = () => clients.size;
   server.views = () => views;
+  /**
+   * The tunnel's whole interface to the server: one hostname, or none.
+   *
+   * Normalised the way the constructor normalises its allowlist — and
+   * deliberately not through hostname(), which strips a :port and would reduce
+   * a bare '::1' to the empty string.
+   */
+  server.setTunnel = (t) => {
+    tunnel = t ? { ...t, host: String(t.host).trim().toLowerCase().replace(/^\[|\]$/g, '') } : null;
+    broadcast('tunnel', tunnel);
+    return tunnel;
+  };
   return server;
 }
 

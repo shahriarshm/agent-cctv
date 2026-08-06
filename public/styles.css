@@ -730,6 +730,36 @@ body[data-locked='true'] {
   letter-spacing: 0.04em;
 }
 
+/*
+  Ember, not tally. The red is the wall's "a session needs you" signal and it
+  is the only thing on screen allowed to mean that; a second permanent red in
+  the same bar would cost the first one its meaning. This is a standing
+  condition rather than a call to act, and ember reads that way.
+
+  Sized like the other bar text and marked .clips on the hostname, so it drops
+  to a bare glyph at the widths where every other label does.
+*/
+.public-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ember-ink);
+  font-size: var(--t-ui);
+  letter-spacing: 0.04em;
+  max-width: 22ch;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.public-badge[hidden] {
+  display: none;
+}
+
+.public-badge .clips {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .link-state {
   display: flex;
   align-items: center;

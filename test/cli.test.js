@@ -29,12 +29,23 @@ function run(args) {
   const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-claude-'));
   fs.mkdirSync(path.join(claudeDir, 'projects'), { recursive: true });
   try {
-    const env = { ...process.env, AGENT_CCTV_HOME: home, AGENT_CCTV_CLAUDE_DIR: claudeDir };
+    // AGENT_CCTV_TUNNEL_TIMEOUT_MS is a test seam, deliberately absent from
+    // --help: the real scrape timeout is 30s and spawnSync below gives up at
+    // 10s, so a tunnel case that waited for the genuine one could only ever
+    // fail as a timeout rather than as the refusal it is testing.
+    const env = {
+      ...process.env,
+      AGENT_CCTV_HOME: home,
+      AGENT_CCTV_CLAUDE_DIR: claudeDir,
+      AGENT_CCTV_TUNNEL_TIMEOUT_MS: '1500',
+    };
     // Never let a variable from the invoking shell mask the case under test.
     delete env.AGENT_CCTV_TOKEN;
     delete env.AGENT_CCTV_HOST;
     delete env.AGENT_CCTV_PORT;
     delete env.AGENT_CCTV_PUBLIC_URL;
+    delete env.AGENT_CCTV_TUNNEL;
+    delete env.AGENT_CCTV_TUNNEL_ARGS;
     return spawnSync(process.execPath, [CLI, 'start', ...args, '--no-open'], {
       encoding: 'utf8',
       env,
@@ -335,4 +346,96 @@ test('views reports a broken file with its line, and still exits 0', () => {
   assert.match(r.stdout, /bad\.yaml/);
   assert.match(r.stdout, /:2/);
   assert.match(r.stdout, /unknown key "groupby"/);
+});
+
+/* ── publishing ──────────────────────────────────────────────────────────── */
+
+/*
+  Every case here must fail before the socket binds, or fail loudly with the
+  child's own words. None of them spawns cloudflared or ngrok — the one that
+  gets as far as a child process uses `node -e` as a stand-in tunnel binary.
+*/
+
+test('a tunnel from a non-terminal without --yes is refused, and nothing binds', () => {
+  // spawnSync gives the child no TTY, which is exactly the systemd/CI shape.
+  const r = run(['--tunnel', 'cloudflare']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--yes/);
+  assert.doesNotMatch(r.stdout, /watching/, 'the banner must not have printed');
+});
+
+test('an unknown provider names the ones that exist', () => {
+  const r = run(['--tunnel', 'wireguard', '--yes']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /cloudflare, ngrok/);
+});
+
+test('--tunnel with --no-token is refused', () => {
+  const r = run(['--tunnel', 'cloudflare', '--yes', '--no-token']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--no-token/);
+});
+
+test('--tunnel and --tunnel-cmd together are refused', () => {
+  const r = run(['--tunnel', 'ngrok', '--tunnel-cmd', 'true', '--yes']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /Pick one/);
+});
+
+test('an ambiguous --tunnel-ttl is refused', () => {
+  const r = run(['--tunnel', 'cloudflare', '--tunnel-ttl', '30', '--yes']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /45s, 30m or 2h/);
+});
+
+test('a tunnel command that never publishes fails with what the child printed', () => {
+  const script = "console.error('edge unreachable'); setInterval(() => {}, 1000);";
+  const r = run([
+    '--tunnel-cmd',
+    `${process.execPath} -e ${JSON.stringify(script)}`,
+    '--yes',
+  ]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /edge unreachable/, 'the operator needs the provider’s own words');
+  assert.match(r.stderr, /--public-url/, 'and the way out, since some providers never print one');
+});
+
+test('a tunnel that publishes prints the public URL and a separate tokened link', () => {
+  // The wall keeps running after this, so it is spawned rather than run() —
+  // and killed by the TTL, which is the shortest one the parser accepts.
+  const script = "console.log('https://demo.example.net'); setInterval(() => {}, 1000);";
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-home-'));
+  const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-cli-claude-'));
+  fs.mkdirSync(path.join(claudeDir, 'projects'), { recursive: true });
+  const port = 21000 + (process.pid % 9000);
+  const env = { ...process.env, AGENT_CCTV_HOME: home, AGENT_CCTV_CLAUDE_DIR: claudeDir };
+  delete env.AGENT_CCTV_TOKEN;
+  delete env.AGENT_CCTV_PUBLIC_URL;
+
+  const child = spawn(
+    process.execPath,
+    [
+      CLI, 'start', '--port', String(port), '--no-open', '--yes',
+      '--tunnel-cmd', `${process.execPath} -e ${JSON.stringify(script)}`,
+    ],
+    { env, stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  let stdout = '';
+  child.stdout.on('data', (d) => (stdout += d));
+
+  return waitFor(() => /demo\.example\.net/.test(stdout), 8000)
+    .then(async () => {
+      assert.match(stdout, /public/, 'the banner says what has happened');
+      assert.match(stdout, /token=/, 'and offers the link that actually works');
+      // The tunnel host is allowed now, and the URL is not on the open endpoint.
+      const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+      const body = await res.json();
+      assert.equal(body.tunnel.provider, 'custom');
+      assert.equal(body.tunnel.url, undefined);
+    })
+    .finally(() => {
+      child.kill();
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(claudeDir, { recursive: true, force: true });
+    });
 });

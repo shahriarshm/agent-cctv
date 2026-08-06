@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { DEFAULT_PORT, DEFAULT_HOST, readConfig } from './paths.js';
+import { parseTtl, PROVIDERS } from './tunnel.js';
 
 /** A shared secret on a team-reachable port is the whole security model. */
 export const MIN_TOKEN_LENGTH = 16;
@@ -30,7 +31,13 @@ export function isLoopback(host) {
  * There is deliberately no "server mode": a company deployment is two
  * environment variables, not a second code path.
  */
-export function resolve({ flags = {}, env = process.env, file = readConfig(), makeToken = newToken } = {}) {
+export function resolve({
+  flags = {},
+  env = process.env,
+  file = readConfig(),
+  makeToken = newToken,
+  tty = undefined,
+} = {}) {
   // `file` (~/.agent-cctv/config.json) is deliberately NOT consulted for host
   // or port. It is a runtime echo written by cmdStart on every successful
   // start — src/hook.js reads it back to know where to POST — not
@@ -66,6 +73,13 @@ export function resolve({ flags = {}, env = process.env, file = readConfig(), ma
 
   const openBrowser = !(flags['no-open'] === true || flags.open === false);
 
+  // A tunnel is the same "reachable beyond this machine" fact as a public URL,
+  // arriving by a different route. The difference is that the hostname it will
+  // add to the allowlist does not exist yet — the provider mints it when the
+  // child process connects — so nothing here can pre-populate allowedHosts.
+  // src/server.js holds that hostname in a slot instead.
+  const tunnelRaw = flags.tunnel || env.AGENT_CCTV_TUNNEL || null;
+
   return {
     port,
     host,
@@ -77,11 +91,78 @@ export function resolve({ flags = {}, env = process.env, file = readConfig(), ma
     secureCookie,
     openBrowser,
     allowedHosts: publicHost ? [...LOOPBACK, publicHost] : [...LOOPBACK],
+    tunnel: typeof tunnelRaw === 'string' ? tunnelRaw.trim().toLowerCase() : tunnelRaw,
+    tunnelCmd: flags['tunnel-cmd'] || null,
+    tunnelArgs: flags['tunnel-args'] || env.AGENT_CCTV_TUNNEL_ARGS || null,
+    tunnelTtlRaw: flags['tunnel-ttl'] || null,
+    // validate() fills this in, so an unparseable duration is a refusal at
+    // startup rather than a timer that silently never fires.
+    tunnelTtlMs: null,
+    assumeYes: flags.yes === true,
+    tty: tty ?? !!process.stdout.isTTY,
   };
 }
 
 /** Every refusal exits before the socket binds. */
 export function validate(cfg) {
+  const publishing = !!(cfg.tunnel || cfg.tunnelCmd);
+
+  if (cfg.tunnel && !Object.hasOwn(PROVIDERS, cfg.tunnel)) {
+    throw new ConfigError(
+      `Unknown tunnel provider: ${cfg.tunnel}\n` +
+        `  Known providers: ${Object.keys(PROVIDERS).join(', ')}\n` +
+        `  Anything else goes through --tunnel-cmd '<command>'.`
+    );
+  }
+
+  if (cfg.tunnel && cfg.tunnelCmd) {
+    throw new ConfigError(
+      `--tunnel and --tunnel-cmd both name a way to publish. Pick one.`
+    );
+  }
+
+  if (cfg.tunnelArgs && !cfg.tunnel) {
+    throw new ConfigError(
+      cfg.tunnelCmd
+        ? `--tunnel-args needs --tunnel.\n` +
+          `  With --tunnel-cmd, the arguments go in the command itself.`
+        : `--tunnel-args needs --tunnel — on its own it would be silently ignored.`
+    );
+  }
+
+  if (cfg.tunnelTtlRaw) {
+    if (!publishing) {
+      throw new ConfigError(`--tunnel-ttl needs --tunnel or --tunnel-cmd — there is nothing to close.`);
+    }
+    try {
+      cfg.tunnelTtlMs = parseTtl(cfg.tunnelTtlRaw);
+    } catch (err) {
+      throw new ConfigError(err.message);
+    }
+  }
+
+  // The tunnel equivalent of the non-loopback-bind rule below, and the more
+  // dangerous one: a bind reaches a network somebody already has access to,
+  // where a tunnel reaches everybody.
+  if (publishing && !cfg.token) {
+    throw new ConfigError(
+      `--no-token cannot be combined with a tunnel.\n` +
+        `  A tunnel puts this dashboard on the public internet, and it serves your\n` +
+        `  transcripts, which contain source code. Drop --no-token.`
+    );
+  }
+
+  // The confirmation in bin/cctv.js is the interactive half of this; a script
+  // has no way to answer it, so the answer has to be in the command line. A
+  // unit file that publishes then says so on its own ExecStart line.
+  if (publishing && !cfg.tty && !cfg.assumeYes) {
+    throw new ConfigError(
+      `Refusing to publish from a non-interactive session without --yes.\n` +
+        `  There is nobody here to confirm that putting this machine's transcripts\n` +
+        `  on the internet is intended. Add --yes to say so in writing.`
+    );
+  }
+
   if (cfg.publicUrlRaw && !cfg.publicHost) {
     throw new ConfigError(
       `AGENT_CCTV_PUBLIC_URL is not a valid absolute URL: ${cfg.publicUrlRaw}\n` +
