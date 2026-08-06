@@ -99,7 +99,14 @@
         It exists so the tiers have one thing to reposition instead of three
         things to keep from colliding.
       -->
-      <div class="bar-shelf" id="bar-shelf">
+      <div class="bar-shelf" id="bar-shelf" aria-labelledby="sheet-title">
+        <!-- Only ever visible while the shelf is the sheet. At wide widths the
+             shelf has no box, and neither do these. -->
+        <div class="sheet-chrome">
+          <h2 id="sheet-title">Controls</h2>
+          <button class="chip" id="sheet-close" type="button">Done</button>
+        </div>
+
         <!-- Which sessions are on the wall, and how they are drawn. -->
         <div class="bar-controls wall-only">
           <label class="chip-pick" id="pick-view-label" data-label="View" data-always="true" data-set="true">
@@ -236,7 +243,26 @@
         <div class="clock" id="clock">--:--:--</div>
         <div class="link-state" id="link" data-up="false"><span class="clips">connecting</span></div>
       </div>
+
+      <button
+        class="act sheet-open"
+        id="sheet-open"
+        type="button"
+        aria-expanded="false"
+        aria-controls="bar-shelf"
+        aria-label="Controls"
+        title="Controls"
+      >
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16" />
+          <circle cx="9" cy="7" r="2.2" />
+          <circle cx="15" cy="12" r="2.2" />
+          <circle cx="9" cy="17" r="2.2" />
+        </svg>
+      </button>
     </header>
+
+    <div class="sheet-scrim" id="sheet-scrim" hidden></div>
 
     <p class="sr-only" id="announce" role="status" aria-live="polite"></p>
 

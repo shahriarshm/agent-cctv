@@ -646,9 +646,8 @@ function closeInspector() {
 }
 
 /** Tab must not escape into the wall behind the scrim. */
-function trapFocus(e) {
-  if (e.key !== 'Tab' || inspector.dataset.open !== 'true') return;
-  const stops = inspector.querySelectorAll('button, [href], select, textarea, input, [tabindex]:not([tabindex="-1"])');
+function trapWithin(container, e) {
+  const stops = container.querySelectorAll('button, [href], select, textarea, input, [tabindex]:not([tabindex="-1"])');
   if (!stops.length) return;
   const first = stops[0];
   const last = stops[stops.length - 1];
@@ -659,6 +658,17 @@ function trapFocus(e) {
     e.preventDefault();
     first.focus();
   }
+}
+
+/*
+  Two modals, never both open — the sheet only exists at widths where the
+  inspector covers the whole screen anyway. The inspector is checked first
+  because it is the one on top when they do overlap.
+*/
+function trapFocus(e) {
+  if (e.key !== 'Tab') return;
+  if (inspector.dataset.open === 'true') trapWithin(inspector, e);
+  else if (document.body.dataset.sheet === 'open') trapWithin(shelf, e);
 }
 
 function renderInspectorMeta(s) {
@@ -726,7 +736,13 @@ function renderTasks(tasks) {
 closeBtn.addEventListener('click', closeInspector);
 scrim.addEventListener('click', closeInspector);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeInspector();
+  if (e.key === 'Escape') {
+    // The sheet is above the inspector when both could be open, and
+    // closeInspector() is a no-op when the drawer is shut, so ordering these
+    // the other way round would close the wrong one.
+    if (document.body.dataset.sheet === 'open') setSheet(false);
+    else closeInspector();
+  }
   trapFocus(e);
 });
 
@@ -1160,6 +1176,69 @@ systemLight.addEventListener('change', () => {
 });
 
 applyTheme();
+
+/* ── the sheet ─────────────────────────────────────────────────────────── */
+
+/*
+  Below the breakpoint, .bar-shelf stops being a layout no-op and becomes a
+  panel pinned to the bottom of the viewport. Nothing moves in the DOM, so this
+  only has to own three things: open-ness, focus, and Escape — the same three
+  the inspector drawer owns.
+*/
+const shelf = document.getElementById('bar-shelf');
+const sheetOpenBtn = document.getElementById('sheet-open');
+const sheetScrim = document.getElementById('sheet-scrim');
+
+/*
+  Read from CSS rather than repeated here. A breakpoint duplicated across two
+  files is a pair that stays in step until the day it does not, and the failure
+  is a sheet that cannot be closed by widening the window.
+*/
+const sheetTier = matchMedia(
+  `(max-width: ${getComputedStyle(document.documentElement).getPropertyValue('--sheet-tier').trim() || '820px'})`
+);
+
+function setSheet(open) {
+  document.body.dataset.sheet = open ? 'open' : 'shut';
+  sheetOpenBtn.setAttribute('aria-expanded', String(open));
+  sheetScrim.hidden = !open;
+  document.body.dataset.locked = String(open);
+
+  /*
+    The dialog role is added and removed rather than sitting in the markup.
+    Above the breakpoint the shelf is not a dialog, it is three regions of a
+    header, and announcing it as one to every desktop screen-reader user would
+    be a worse bug than the one this whole change is fixing.
+  */
+  if (open) {
+    shelf.setAttribute('role', 'dialog');
+    shelf.setAttribute('aria-modal', 'true');
+    // The first control, not the heading: landing on the title means tabbing
+    // past the chrome before reaching anything you can act on.
+    shelf.querySelector('.bar-controls select, .bar-controls button')?.focus();
+  } else {
+    shelf.removeAttribute('role');
+    shelf.removeAttribute('aria-modal');
+    sheetOpenBtn.focus();
+  }
+}
+
+sheetOpenBtn.addEventListener('click', () => setSheet(document.body.dataset.sheet !== 'open'));
+sheetScrim.addEventListener('click', () => setSheet(false));
+document.getElementById('sheet-close').addEventListener('click', () => setSheet(false));
+
+/*
+  Widening the window puts every region back in the bar on its own, but the
+  scrim, the scroll lock and the open flag would all survive it — leaving a
+  backdrop over a header that is working perfectly well.
+*/
+sheetTier.addEventListener('change', (e) => {
+  if (!e.matches && document.body.dataset.sheet === 'open') setSheet(false);
+});
+
+/* Not setSheet(false) — that moves focus to the trigger, and doing so during
+   module evaluation steals it from the page on load. */
+document.body.dataset.sheet = 'shut';
 
 setInterval(() => {
   clockEl.textContent = new Date().toLocaleTimeString([], { hour12: false });
