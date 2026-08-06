@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { start } from '../src/server.js';
 import { Store } from '../src/store.js';
 import { resolve, validate, ConfigError } from '../src/config.js';
@@ -27,17 +29,53 @@ const c = {
 // disabling it the same way; and either one leaves the subcommand unparsed,
 // so args._ is empty and `cmd` silently falls back to its "start" default —
 // masking the bug rather than surfacing it for anything but "start" itself.
-const BOOLEAN_FLAGS = new Set(['no-open', 'no-token', 'project', 'help']);
+const BOOLEAN_FLAGS = new Set(['no-open', 'no-token', 'project', 'help', 'yes']);
 
-function parseArgs(argv) {
+// The mirror of the list above: flags whose value may begin with a dash. The
+// generic rule below refuses one — sensible for `--host`, wrong for
+// `--tunnel-args '--region us'`, where forwarding another program's flags is
+// the entire point. Without this list that value is lost and `--region`
+// becomes a flag of ours, which reads as agent-cctv not supporting a provider
+// option rather than as a parser bug.
+//
+// "May begin with a dash" and not "always takes the next token": `--host
+// --no-open` must still refuse rather than treat --no-open as a hostname, and
+// bin's own test suite appends --no-open to every case, so the greedy version
+// turned three existing refusal tests into a DNS lookup for "--no-open".
+const VALUE_FLAGS = new Set([
+  'port',
+  'host',
+  'public-url',
+  'tunnel',
+  'tunnel-args',
+  'tunnel-cmd',
+  'tunnel-ttl',
+]);
+
+/** A token that is one of our own flags, and so never somebody else's value. */
+function isOurFlag(token) {
+  if (typeof token !== 'string' || !token.startsWith('--')) return false;
+  const key = token.slice(2).split('=')[0];
+  return BOOLEAN_FLAGS.has(key) || VALUE_FLAGS.has(key);
+}
+
+export function parseArgs(argv) {
   const args = { _: [], flags: {} };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
-      const [k, v] = a.slice(2).split('=');
-      args.flags[k] = BOOLEAN_FLAGS.has(k)
-        ? (v ?? true)
-        : v ?? (argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true);
+      // Split on the FIRST = only. `--tunnel-args=--log=stdout` is one value
+      // with an = in it; destructuring [k, v] out of split('=') silently threw
+      // away everything after the second one and passed `--log` to ngrok.
+      const body = a.slice(2);
+      const eq = body.indexOf('=');
+      const k = eq < 0 ? body : body.slice(0, eq);
+      const v = eq < 0 ? undefined : body.slice(eq + 1);
+      if (BOOLEAN_FLAGS.has(k)) args.flags[k] = v ?? true;
+      else if (v !== undefined) args.flags[k] = v;
+      else if (VALUE_FLAGS.has(k))
+        args.flags[k] = argv[i + 1] !== undefined && !isOurFlag(argv[i + 1]) ? argv[++i] : true;
+      else args.flags[k] = argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : true;
     } else if (a.startsWith('-') && a.length > 1) {
       args.flags[a.slice(1)] = true;
     } else {
@@ -359,25 +397,34 @@ function cmdViews() {
   console.log('');
 }
 
-const args = parseArgs(process.argv.slice(2));
-const cmd = args._[0] || 'start';
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const cmd = args._[0] || 'start';
 
-if (args.flags.help || args.flags.h || cmd === 'help') {
-  console.log(HELP);
-} else if (cmd === 'start') {
-  await cmdStart(args.flags);
-} else if (cmd === 'status') {
-  await cmdStatus();
-} else if (cmd === 'install') {
-  cmdInstall(args.flags);
-} else if (cmd === 'uninstall') {
-  cmdUninstall(args.flags);
-} else if (cmd === 'views') {
-  cmdViews();
-} else if (cmd === 'doctor') {
-  cmdDoctor();
-} else {
-  console.error(`Unknown command: ${cmd}`);
-  console.log(HELP);
-  process.exitCode = 1;
+  if (args.flags.help || args.flags.h || cmd === 'help') {
+    console.log(HELP);
+  } else if (cmd === 'start') {
+    await cmdStart(args.flags);
+  } else if (cmd === 'status') {
+    await cmdStatus();
+  } else if (cmd === 'install') {
+    cmdInstall(args.flags);
+  } else if (cmd === 'uninstall') {
+    cmdUninstall(args.flags);
+  } else if (cmd === 'views') {
+    cmdViews();
+  } else if (cmd === 'doctor') {
+    cmdDoctor();
+  } else {
+    console.error(`Unknown command: ${cmd}`);
+    console.log(HELP);
+    process.exitCode = 1;
+  }
+}
+
+// Importing this file must not start a server — test/args.test.js imports it
+// for parseArgs alone. `import.meta.main` is Node 24+; comparing argv[1] to
+// this module's own path is the spelling that works on the ≥18 this supports.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
 }
