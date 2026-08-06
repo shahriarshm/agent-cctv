@@ -1,0 +1,59 @@
+# A permanently published wall: a NAMED cloudflared tunnel, which keeps a
+# hostname you own across restarts.
+#
+# Quick tunnels are the other shape — a throwaway hostname, opened by hand, for
+# minutes — and are not what a unit file is for. If a quick tunnel restarts it
+# comes back on a different hostname, so a supervisor restarting one produces a
+# service nobody can find.
+#
+# A named tunnel prints no URL anywhere: its hostname lives in your Cloudflare
+# DNS, not in the process output. AGENT_CCTV_PUBLIC_URL is therefore not
+# optional here — it is where agent-cctv learns which hostname to allow, and
+# what makes the session cookie Secure.
+#
+# Put Cloudflare Access in front of that hostname. agent-cctv's token says
+# "somebody with the link"; Access says which person, and writes it down.
+#
+#   cp agent-cctv-tunnel.service.example /etc/systemd/system/agent-cctv.service
+#   cp agent-cctv.env.example /etc/agent-cctv.env   # then edit it
+#   systemctl daemon-reload && systemctl enable --now agent-cctv
+
+[Unit]
+Description=agent-cctv (published through a Cloudflare tunnel)
+Documentation=https://github.com/shahriarshariati/agent-cctv
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The account the AGENTS run as. agent-cctv resolves ~/.claude from this user's
+# own home directory, so a different account looks in the wrong home entirely,
+# finds nothing, and exits. Never root: this process serves file contents.
+User=agents
+EnvironmentFile=/etc/agent-cctv.env
+
+# --yes because there is no terminal here to confirm on. Writing it out is the
+# point: a unit file that publishes to the internet says so on its own
+# ExecStart line, where anyone reading the unit will see it.
+ExecStart=/usr/bin/agent-cctv --no-open --yes \
+  --tunnel cloudflare \
+  --tunnel-args "run my-wall"
+
+Restart=on-failure
+RestartSec=5
+
+# agent-cctv writes only here, and only its own runtime state.
+StateDirectory=agent-cctv
+Environment=AGENT_CCTV_HOME=/var/lib/agent-cctv
+
+# It reads two directories and serves them. It needs nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

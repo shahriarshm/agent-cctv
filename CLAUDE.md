@@ -81,6 +81,28 @@ HttpOnly cookie once, so it stops appearing in the SSE URL and can be scrubbed
 from the address bar. **`/api/views` (POST) is the only endpoint that writes
 anything a person reads back** — see `writeView()`.
 
+### Tunnels (`src/tunnel.js`)
+
+`--tunnel` spawns a provider binary the operator already installed and scrapes
+the public URL out of its output. Provider records are **data** (an argv builder
+and a matcher) because the matchers are the part most likely to break under us:
+neither cloudflared's banner nor ngrok's log schema is a documented interface.
+When one changes, `--public-url` is the path that keeps working — and it is also
+the *only* path for a named cloudflared tunnel, which prints no URL at all
+because its hostname lives in the operator's DNS.
+
+The server holds **one tunnel slot**, not another allowlist entry (`setTunnel`).
+A re-opened quick tunnel returns on a different hostname, so a Set would
+accumulate dead ones and a bug in the remove path could evict loopback from its
+own allowlist. For the same reason there is deliberately **no respawn**: a new
+hostname cannot revive the link somebody was already sent, so a dying tunnel
+prints loudly, clears the slot, and leaves the wall serving loopback.
+
+Two facts worth keeping: output must be drained for the child's whole life (ngrok
+logs every request, and the SSE stream is a request that never ends — a full pipe
+blocks the child), and `--tunnel-cmd` runs `shell: true, detached: true` because
+the shell's *grandchild* is what holds the tunnel and outlives `child.kill()`.
+
 ### Views
 
 `public/match.js` is the view predicate, and `src/views.js` imports it *from
@@ -155,6 +177,16 @@ a 4 KB one. Opening one replays it through the same tailer and a throwaway
   hand. A mismatch gives you a sheet that will not close when the window widens.
 - `node:fetch` silently rewrites the `Host` header, so any allowlist test written
   with it is meaningless — `test/server.test.js` uses raw `node:http` for those.
+- `Secure` on the auth cookie is a **per-request** decision (`secureFor`), not a
+  process-wide one — with a tunnel up, https at the edge and plain http on
+  loopback are the same run. It keys off the request's `Host`, never
+  `X-Forwarded-Proto`, which anyone can send.
+- No test may spawn `cloudflared` or `ngrok`. Provider records are data; the
+  process machinery is tested through `--tunnel-cmd` with `node` as the child.
+- `bin/cctv.js` has two flag lists that must both be fed: `BOOLEAN_FLAGS` for a
+  flag taking no value, and `VALUE_FLAGS` for one whose value may begin with a
+  dash. Missing the second is silent — the value is dropped and re-parsed as a
+  flag of ours.
 
 ## Working style in this repo
 

@@ -377,6 +377,53 @@ configured, even on a loopback bind — a public URL means a reverse proxy is
 making this reachable beyond this machine, which is the same exposure as a
 non-loopback bind.
 
+### Putting it on the internet
+
+Two shapes, one flag. Both need a tunnel binary you already have — agent-cctv
+spawns it, reads the public URL out of its output, and stops it when you stop.
+
+**For ten minutes.** A Cloudflare quick tunnel needs no account, no DNS and no
+proxy:
+
+```sh
+agent-cctv --tunnel cloudflare
+```
+
+It asks you to type `yes` first, prints the public link, and closes the tunnel
+when you ctrl-c. `--tunnel ngrok` does the same through ngrok. `--tunnel-cmd
+'<command>'` does it through anything else that prints an https URL — bore,
+localtunnel, localhost.run. And `--tunnel-ttl 30m` closes it for you, so a wall
+you published over lunch is not still public on Thursday.
+
+**For good.** Point `--tunnel-args` at a named tunnel or a reserved domain, and
+set `AGENT_CCTV_PUBLIC_URL` to the hostname you own:
+
+```sh
+AGENT_CCTV_PUBLIC_URL=https://cctv.example.com \
+  agent-cctv --yes --tunnel cloudflare --tunnel-args "run my-wall"
+```
+
+That variable is required here, not optional: a named cloudflared tunnel prints
+no URL anywhere — its hostname lives in your Cloudflare DNS — so it is the only
+way agent-cctv can learn which hostname to allow. See
+[`deploy/agent-cctv-tunnel.service.example`](deploy/agent-cctv-tunnel.service.example).
+
+Either way the trust model above does not change, and through a tunnel it is
+worth reading twice. On loopback, "everyone who can reach it" means you.
+Published, it means anyone holding the link — and that link is a bearer
+credential, which survives being pasted into a channel, a screenshot or a bug
+report. agent-cctv refuses to publish without a token, refuses to publish from
+a script without `--yes`, and prints the address and the tokened link on
+separate lines so the wrong one is harder to copy. It cannot un-send a URL.
+
+If you need to know *which person* read the wall, put Cloudflare Access or your
+own SSO in front of a hostname you own. The token only ever says "somebody".
+
+While a tunnel is up the dashboard shows a `public` badge with the hostname, in
+the top right. If the tunnel drops, that link is dead — a re-opened quick tunnel
+comes back on a *different* hostname — and agent-cctv says so and keeps serving
+locally rather than trying to reconnect a link nobody can use.
+
 ### Retention
 
 agent-cctv still stores nothing. The agents' own JSONL logs are the durable
@@ -398,7 +445,13 @@ record, and on this topology they are on the same disk.
 - **Pin your Claude Code version, and alert on degradation.** The internals it
   reads are undocumented. `GET /api/health` needs no token and returns
   `capabilities`; alert on `capabilities['claude-code'].registry === false`,
-  which means an update moved something and the wall is about to go stale.
+  which means an update moved something and the wall is about to go stale. The
+  same endpoint reports `tunnel` — its provider and start time, never its URL —
+  so you can alert on a box that is publishing when it should not be.
+- **An orphaned tunnel fails closed.** If agent-cctv is killed outright, the
+  provider binary can survive it and keep forwarding. Nothing reaps it, because
+  nothing needs to: a restarted agent-cctv without `--tunnel` has no tunnel
+  hostname to allow, so every request arriving through the orphan gets a 403.
 - **Docker is not supported as the primary path.** Without `--pid=host` the
   liveness check fails for every host pid and every session reads as dead —
   it destroys the one authoritative signal the tool has. Use npm + systemd.
