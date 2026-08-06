@@ -114,14 +114,50 @@
             <select id="pick-view" aria-label="Which view"></select>
           </label>
           <span class="view-warn" id="view-warn" role="status" hidden></span>
-          <label class="pick">
-            <span>mode</span>
-            <select id="pick-mode">
-              <option value="wall">wall</option>
-              <option value="focus">focus</option>
-              <option value="tail">tail</option>
-            </select>
-          </label>
+          <div class="seg" role="group" aria-label="Display mode">
+            <button
+              class="seg-btn"
+              data-mode="wall"
+              type="button"
+              aria-pressed="true"
+              aria-label="Wall — every session as a tile"
+              title="Wall — every session as a tile"
+            >
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3.5" y="4.5" width="7.5" height="6.5" rx="1" />
+                <rect x="13" y="4.5" width="7.5" height="6.5" rx="1" />
+                <rect x="3.5" y="13" width="7.5" height="6.5" rx="1" />
+                <rect x="13" y="13" width="7.5" height="6.5" rx="1" />
+              </svg>
+            </button>
+            <button
+              class="seg-btn"
+              data-mode="focus"
+              type="button"
+              aria-pressed="false"
+              aria-label="Focus — one session big, the rest as a rail"
+              title="Focus — one session big, the rest as a rail"
+            >
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3.5" y="4.5" width="11" height="15" rx="1" />
+                <rect x="16.5" y="4.5" width="4" height="4" rx="1" />
+                <rect x="16.5" y="10" width="4" height="4" rx="1" />
+                <rect x="16.5" y="15.5" width="4" height="4" rx="1" />
+              </svg>
+            </button>
+            <button
+              class="seg-btn"
+              data-mode="tail"
+              type="button"
+              aria-pressed="false"
+              aria-label="Tail — the whole room as one stream"
+              title="Tail — the whole room as one stream"
+            >
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6.5h16M4 11h16M4 15.5h11M4 20h7" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <!-- Narrowing within that. Three controls that sit on their default

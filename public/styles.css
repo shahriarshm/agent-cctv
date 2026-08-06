@@ -547,6 +547,47 @@ body[data-locked='true'] {
   display: none;
 }
 
+/*
+  Three options, all of them a picture of a layout. A select would spend a word
+  and a caret saying what the picture says, and would be wider.
+
+  It borrows .readout's lit-and-underlined treatment on purpose: the mode
+  toggle and the state filter are the same kind of control — pick one of a
+  small set — and reading as one family beats inventing a second look.
+*/
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  flex: none;
+}
+
+.seg-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 2px;
+  color: var(--ink-3);
+}
+
+.seg-btn:hover {
+  color: var(--ink);
+}
+
+.seg-btn[aria-pressed='true'] {
+  background: var(--panel-hi);
+  box-shadow: inset 0 -2px 0 var(--ink);
+  color: var(--ink);
+}
+
 .chip-pick select {
   position: absolute;
   inset: 0;

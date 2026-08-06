@@ -1021,7 +1021,7 @@ groupSel.addEventListener('change', () => {
 
 /** Must stay in step with MODES in src/views.js. */
 const MODES = ['wall', 'focus', 'tail'];
-const modeSel = document.getElementById('pick-mode');
+const modeBtns = [...document.querySelectorAll('.seg-btn')];
 const focusEl = document.getElementById('focus');
 const tailEl = document.getElementById('tail');
 const groupLabel = document.getElementById('pick-group-label');
@@ -1053,7 +1053,7 @@ function setMode(mode, { fromUser = false } = {}) {
   if (!MODES.includes(mode)) mode = 'wall';
   const changed = filters.mode !== mode;
   filters.mode = mode;
-  modeSel.value = mode;
+  for (const b of modeBtns) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
   document.body.dataset.viewMode = mode;
 
   wall.hidden = mode !== 'wall';
@@ -1075,7 +1075,9 @@ function setMode(mode, { fromUser = false } = {}) {
   layout();
 }
 
-modeSel.addEventListener('change', () => setMode(modeSel.value, { fromUser: true }));
+for (const btn of modeBtns) {
+  btn.addEventListener('click', () => setMode(btn.dataset.mode, { fromUser: true }));
+}
 
 /*
   A click in the rail promotes that session rather than opening the drawer — in
