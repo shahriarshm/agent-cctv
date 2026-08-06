@@ -6,10 +6,10 @@ import path from 'node:path';
 
 import { describeTool, toolVerb, prettyToolName, toolCategory } from '../src/sources/claude-code/describe.js';
 import { TranscriptTailer, cleanPrompt } from '../src/sources/claude-code/transcript.js';
-import { Store } from '../src/store.js';
+import { Store, serialize } from '../src/store.js';
 import { fromHook } from '../src/sources/claude-code/hooks.js';
 import * as installer from '../src/install.js';
-import { projectSlug } from '../src/sources/claude-code/index.js';
+import { projectSlug, ClaudeCodeSource } from '../src/sources/claude-code/index.js';
 import { prose } from '../src/util.js';
 import { shouldNotify, describe as describeAlert } from '../public/notify.js';
 import { RolloutTailer } from '../src/sources/codex/rollout.js';
@@ -284,6 +284,31 @@ test('a hooks-only session that goes silent stops looking live', () => {
   store.sweep();
   assert.equal(store.get('s1').state, 'ended');
   assert.equal(store.get('s1').endedReason, 'silent');
+});
+
+test('a registry file vanishing retires the session, urgency included', () => {
+  // The gone patch must carry authority: the session became authoritative on
+  // `appeared`, and the store refuses a state write from anyone weaker. Losing
+  // that flag left an exited CLI's tile — urgent border and all — up forever.
+  const sessionsDir = tmpdir('sessions');
+  const src = new ClaudeCodeSource({ projectsRoot: tmpdir('projects'), sessionsDir });
+  src.caps = { ...src.caps, registry: true, tasks: false };
+  const store = new Store();
+  src.on('update', (u) => store.apply(u));
+  src.start();
+
+  const file = path.join(sessionsDir, `${process.pid}.json`);
+  fs.writeFileSync(file, JSON.stringify({ sessionId: 'gone-1', cwd: '/tmp/p', status: 'waiting', waitingFor: 'permission to run rm' }));
+  src.registry.poll();
+  assert.equal(store.get('gone-1').state, 'waiting');
+  assert.equal(serialize(store.get('gone-1')).urgent, true);
+
+  fs.rmSync(file);
+  src.registry.poll();
+  src.stop();
+  assert.equal(store.get('gone-1').state, 'ended');
+  assert.equal(store.get('gone-1').endedReason, 'file-removed');
+  assert.equal(serialize(store.get('gone-1')).urgent, false);
 });
 
 test('ended sessions leave the wall once they are stale', () => {

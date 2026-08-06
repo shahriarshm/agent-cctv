@@ -8,7 +8,7 @@
 */
 
 import { el, clockTime } from './format.js';
-import { createTimeline, buildEntry } from './timeline.js';
+import { createTimeline, buildEntry, paintEntry, foldTools } from './timeline.js';
 
 /* ── focus ───────────────────────────────────────────────────────────────── */
 
@@ -133,14 +133,32 @@ export function createTail(node) {
     empty = null;
   }
 
-  function row(ev, name) {
+  function row(ev, name, sessionId) {
     const entry = buildEntry(ev);
     // Which session this is — the one thing a merged stream must say that a
     // single session's timeline never has to.
     const who = el('span', 'tail-who', name || '');
     who.title = name || '';
     entry.querySelector('.label')?.prepend(who);
+    // Scopes the fold below. Tool ids are unique within a session, not across
+    // the several this pane merges.
+    if (sessionId) entry.dataset.session = sessionId;
     return entry;
+  }
+
+  /**
+   * The row this result belongs to — the tail folds a call and its result into
+   * one row exactly as the inspector does. Without this every tool call in the
+   * merged stream appeared twice: a start that never completed, and a stray
+   * "done" underneath it.
+   */
+  function openCall(ev, sessionId) {
+    const id = ev.tool?.id;
+    if (ev.kind !== 'tool_end' || id == null) return null;
+    const scope = sessionId ? `[data-session="${CSS.escape(String(sessionId))}"]` : '';
+    return node.querySelector(
+      `.entry[data-phase="start"][data-tool="${CSS.escape(String(id))}"]${scope}`
+    );
   }
 
   function trim() {
@@ -153,12 +171,14 @@ export function createTail(node) {
     show(sessions) {
       const rows = [];
       for (const s of sessions) {
-        for (const ev of s.events || []) rows.push([ev, s.name]);
+        // Folded per session, before the merge, for the same reason the query
+        // above is scoped: two sessions can hold the same tool id.
+        for (const ev of foldTools(s.events || [])) rows.push([ev, s.name, s.id]);
       }
       rows.sort((a, b) => a[0].ts - b[0].ts);
       node.replaceChildren();
       clearEmpty();
-      for (const [ev, name] of rows) node.prepend(row(ev, name));
+      for (const [ev, name, id] of rows) node.prepend(row(ev, name, id));
       trim();
       if (!node.childElementCount) {
         empty = el('div', 'tail-empty', 'Quiet. Nothing has happened in this view yet.');
@@ -168,8 +188,23 @@ export function createTail(node) {
 
     activity(ev, name) {
       clearEmpty();
+      const running = openCall(ev, ev.sessionId);
+      if (running) {
+        // The row keeps its own id and position, and a result with no detail of
+        // its own keeps the call's — the same merge createTimeline() does.
+        paintEntry(running, {
+          ...ev,
+          id: running.dataset.id,
+          detail: ev.detail || running._refs.detail.textContent,
+        });
+        // paintEntry rewrites the label, taking the session name with it.
+        const who = el('span', 'tail-who', name || '');
+        who.title = name || '';
+        running.querySelector('.label')?.prepend(who);
+        return;
+      }
       if (node.querySelector(`[data-id="${CSS.escape(ev.id)}"]`)) return;
-      node.prepend(row(ev, name));
+      node.prepend(row(ev, name, ev.sessionId));
       trim();
     },
 

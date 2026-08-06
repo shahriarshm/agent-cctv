@@ -126,6 +126,11 @@ function checkMatch(match, keyPath, fail, inExclude) {
     if (field === 'exclude') {
       if (inExclude) fail('"exclude" cannot be nested inside another exclude', here);
       checkMatch(value, here, fail, true);
+      // An empty exclude excludes nothing, and the writer cannot express it —
+      // `exclude:` with nothing under it is the shape parseYaml refuses. Caught
+      // here it is a 400 naming the key; caught later it was a 500 quoting the
+      // YAML writer at whoever pressed save.
+      if (value && !Object.keys(value).length) fail('"exclude" needs at least one field', here);
       continue;
     }
     if (field !== 'state' && !FIELDS[field]) {
@@ -203,10 +208,18 @@ export function writeView({ name, view = {}, replace = false }, dir = VIEWS_DIR)
     throw new ViewWriteError(err.message, 400);
   }
 
-  const body =
-    '# Written by the agent-cctv dashboard. Edit it by hand — this is an\n' +
-    '# ordinary view file, and the format is in the README.\n' +
-    stringifyYaml(strip(normalized));
+  // In the same try as normalize(): stringifyYaml refuses shapes it cannot
+  // write, and every one of them comes from the request body. Uncaught, that
+  // reached the operator as a 500 quoting the YAML writer.
+  let body;
+  try {
+    body =
+      '# Written by the agent-cctv dashboard. Edit it by hand — this is an\n' +
+      '# ordinary view file, and the format is in the README.\n' +
+      stringifyYaml(strip(normalized));
+  } catch (err) {
+    throw new ViewWriteError(err.message, 400);
+  }
 
   fs.mkdirSync(dir, { recursive: true });
   // Atomic: a half-written view file is one the loader would report as broken,

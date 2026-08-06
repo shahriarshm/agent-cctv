@@ -152,9 +152,11 @@ The YAML is a deliberately small subset — comments, `key: value`, quoted strin
 lists and nested maps — and it refuses anything else by line number rather than
 guessing. agent-cctv has no dependencies, so this is a parser we own, and one
 that quietly misreads `branch: "feat/*" # temporary` would put the wrong sessions
-on the wall while looking entirely confident. (One consequence worth knowing:
-`cwd: */scratch/*` is a YAML alias, so globs that start with `*` need quoting.
-The parser tells you so.)
+on the wall while looking entirely confident. (Two consequences worth knowing:
+`cwd: */scratch/*` is a YAML alias, so globs that start with `*` need quoting —
+the parser tells you so. And inside double quotes the only escapes are `\"` and
+`\\`; anything else is refused by name, rather than read as the backslash it
+isn't.)
 
 `AGENT_CCTV_VIEWS_DIR` moves the directory. On the team deployment below it
 follows `AGENT_CCTV_HOME` to `/var/lib/agent-cctv/views`, where one set of views

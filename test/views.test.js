@@ -349,3 +349,62 @@ test('an unknown mode is refused with its line', () => {
   assert.equal(errors[0].line, 2);
   assert.match(errors[0].message, /"mode" must be one of wall, focus, tail/);
 });
+
+/* ── quoting, both directions ────────────────────────────────────────────── */
+
+import { stringifyYaml } from '../src/yaml.js';
+import { writeView } from '../src/views.js';
+
+test('an escaped quote does not end the string, so a later # is not a comment', () => {
+  // Read as a closing quote, the ` # ` after it looked like a real comment and
+  // took the rest of the value with it — no error, just a shorter name.
+  const { value } = parseYaml(String.raw`name: "say \" # not a comment"`);
+  assert.equal(value.name, 'say " # not a comment');
+});
+
+test('escapes written are escapes read back', () => {
+  for (const original of [
+    { v: 'C:\\Users\\name: x' },
+    { v: 'say "hi"' },
+    { v: 'a\\b # c' },
+    { tags: ['x"y', 'p,q', 'plain'] },
+  ]) {
+    const text = stringifyYaml(original);
+    assert.deepEqual(parseYaml(text).value, original, `round trip failed for ${text}`);
+  }
+});
+
+test('an escape the writer never emits is refused rather than guessed at', () => {
+  const err = refused(() => parseYaml(String.raw`name: "a\qb"` + '\n'));
+  assert.ok(err instanceof YamlError);
+  assert.match(err.message, /unknown escape/);
+});
+
+test('text after a closing quote is refused instead of being swallowed', () => {
+  const err = refused(() => parseYaml('name: "a"b"\n'));
+  assert.ok(err instanceof YamlError);
+  assert.match(err.message, /trailing text/);
+});
+
+test('an empty exclude is a refusal naming the key, not a write error', () => {
+  const dir = viewsDir({});
+  let err;
+  try {
+    writeView({ name: 'X', view: { match: { exclude: {} } } }, dir);
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err, 'expected a refusal');
+  assert.equal(err.status, 400, `got ${err.status}: ${err.message}`);
+  assert.match(err.message, /exclude/);
+  assert.equal(fs.existsSync(path.join(dir, 'x.yaml')), false, 'nothing was written');
+});
+
+test('a saved view reads back as itself, quoting and all', () => {
+  const dir = viewsDir({});
+  writeView({ name: 'Deploys "prod" # 1', view: { match: { branch: 'feat/*', exclude: { cwd: '*/scratch/*' } } } }, dir);
+  const { views, errors } = loadViews(dir);
+  assert.deepEqual(errors, []);
+  assert.equal(views[0].name, 'Deploys "prod" # 1');
+  assert.deepEqual(views[0].match, { branch: 'feat/*', exclude: { cwd: '*/scratch/*' } });
+});

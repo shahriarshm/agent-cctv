@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
-npm test                                          # whole suite (node --test, 232 tests)
+npm test                                          # whole suite (node --test, 242 tests)
 node --test test/views.test.js                    # one file
 node --test --test-name-pattern "mode defaults"   # one test, by name
 
@@ -16,7 +16,8 @@ node bin/cctv.js status           # live sessions, from the terminal
 ```
 
 There is no build step, no linter, and no runtime dependencies — `public/*.js` is
-served to the browser exactly as written. Node ≥18, ESM throughout.
+served to the browser exactly as written. Node ≥18.2 (`closeIdleConnections`,
+which shutdown needs), ESM throughout.
 
 Point the reader at fixtures instead of a real home directory with
 `AGENT_CCTV_HOME`, `AGENT_CCTV_CLAUDE_DIR`, `AGENT_CCTV_CODEX_DIR`,
