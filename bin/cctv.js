@@ -154,7 +154,14 @@ async function confirmPublish(cfg) {
   console.log(`  ${c.dim('guarded by')}   a ${cfg.token.length}-character token, carried in the link`);
   console.log('');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await new Promise((r) => rl.question(`  Type ${c.bold('yes')} to publish: `, r));
+  // 'close' as well as an answer: validate() gates on stdout being a terminal,
+  // and stdin can be closed while stdout is not (`agent-cctv --tunnel … <
+  // /dev/null`). question()'s callback never fires on EOF, so waiting only on
+  // it hangs the process forever with a prompt on screen. EOF is not "yes".
+  const answer = await new Promise((r) => {
+    rl.question(`  Type ${c.bold('yes')} to publish: `, r);
+    rl.once('close', () => r(''));
+  });
   rl.close();
   return answer.trim().toLowerCase() === 'yes';
 }
