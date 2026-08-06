@@ -32,7 +32,7 @@ async function serve(opts = {}) {
         const req = http.request({ host: '127.0.0.1', port, path, headers }, (res) => {
           let body = '';
           res.on('data', (c) => (body += c));
-          res.on('end', () => resolve({ status: res.statusCode, body }));
+          res.on('end', () => resolve({ status: res.statusCode, body, headers: res.headers }));
         });
         req.on('error', reject);
         req.end();
@@ -283,14 +283,151 @@ test('an already-cookied request is not re-issued a cookie', async () => {
 
 /* ── health ────────────────────────────────────────────────────────────── */
 
-test('/api/health reveals liveness and capabilities, and nothing else', async () => {
+test('/api/health reveals liveness, capabilities and the tunnel, and nothing else', async () => {
+  // The exact key set is the assertion, not a sample of it: this endpoint
+  // needs no credential, and it used to return a pid and a live session count.
+  // `tunnel` was added deliberately — "is this box publishing?" is the same
+  // class of operator alert as registry degradation — and it is checked
+  // elsewhere for carrying no URL.
   const s = await serve({ token: TOKEN });
   try {
     const res = await fetch(s.url('/api/health'));
     assert.equal(res.status, 200, 'health must not require the token');
     const body = await res.json();
-    assert.deepEqual(Object.keys(body).sort(), ['capabilities', 'ok']);
+    assert.deepEqual(Object.keys(body).sort(), ['capabilities', 'ok', 'tunnel']);
     assert.equal(body.ok, true);
+  } finally {
+    await s.close();
+  }
+});
+
+/*
+  The tunnel slot. A tunnel's hostname is not known until its child process
+  prints it, and a re-opened quick tunnel comes back on a different one — so
+  the server holds one slot rather than growing its allowlist, and these prove
+  the door opens and closes with it.
+*/
+
+const TUNNEL = {
+  host: 'demo.trycloudflare.com',
+  provider: 'cloudflare',
+  url: 'https://demo.trycloudflare.com',
+  since: 1754400000000,
+};
+
+test('a tunnel host is allowed only while the tunnel is up', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const before = await s.raw('/api/health', { host: 'demo.trycloudflare.com' });
+    assert.equal(before.status, 403, 'an unknown host is refused before a tunnel exists');
+
+    s.server.setTunnel(TUNNEL);
+    const during = await s.raw('/api/health', { host: 'demo.trycloudflare.com' });
+    assert.equal(during.status, 200);
+
+    s.server.setTunnel(null);
+    const after = await s.raw('/api/health', { host: 'demo.trycloudflare.com' });
+    assert.equal(after.status, 403, 'closing the tunnel closes the door behind it');
+  } finally {
+    await s.close();
+  }
+});
+
+test('loopback stays allowed while a tunnel is up', async () => {
+  // The slot exists partly so this cannot break: nothing about opening a
+  // tunnel may evict loopback from its own allowlist.
+  const s = await serve({ token: TOKEN });
+  try {
+    s.server.setTunnel(TUNNEL);
+    for (const host of ['localhost', '127.0.0.1']) {
+      const res = await s.raw('/api/health', { host });
+      assert.equal(res.status, 200, `${host} should still be allowed`);
+    }
+  } finally {
+    await s.close();
+  }
+});
+
+test('an Origin from the tunnel is allowed, and one from elsewhere is not', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    s.server.setTunnel(TUNNEL);
+    const ok = await fetch(s.url('/api/health'), {
+      headers: { origin: 'https://demo.trycloudflare.com' },
+    });
+    assert.equal(ok.status, 200);
+    const bad = await fetch(s.url('/api/health'), {
+      headers: { origin: 'https://other.trycloudflare.com' },
+    });
+    assert.equal(bad.status, 403);
+  } finally {
+    await s.close();
+  }
+});
+
+test('Secure follows the host the request actually arrived on', async () => {
+  // The tunnel edge is https and loopback is not, in the same run. One
+  // construction-time boolean is wrong in one direction or the other.
+  const s = await serve({ token: TOKEN });
+  try {
+    s.server.setTunnel(TUNNEL);
+
+    const viaTunnel = await s.raw(`/api/state?token=${TOKEN}`, { host: 'demo.trycloudflare.com' });
+    assert.equal(viaTunnel.status, 200);
+    assert.match(String(viaTunnel.headers['set-cookie']), /Secure/i);
+
+    const local = await s.raw(`/api/state?token=${TOKEN}`, { host: '127.0.0.1' });
+    assert.equal(local.status, 200);
+    assert.doesNotMatch(String(local.headers['set-cookie']), /Secure/i);
+  } finally {
+    await s.close();
+  }
+});
+
+test('/api/health reports that a tunnel exists but never its URL', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    s.server.setTunnel(TUNNEL);
+    const res = await fetch(s.url('/api/health'));
+    const body = await res.json();
+    assert.equal(body.tunnel.provider, 'cloudflare');
+    assert.equal(body.tunnel.since, 1754400000000);
+    assert.equal(body.tunnel.url, undefined, 'the URL is not for an endpoint that needs no credential');
+    assert.equal(body.tunnel.host, undefined);
+  } finally {
+    await s.close();
+  }
+});
+
+test('/api/health reports no tunnel as null rather than omitting it', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const body = await (await fetch(s.url('/api/health'))).json();
+    assert.equal(body.tunnel, null);
+  } finally {
+    await s.close();
+  }
+});
+
+test('/api/state carries the tunnel, so the dashboard learns of it authenticated', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    s.server.setTunnel(TUNNEL);
+    const body = await (await fetch(s.url(`/api/state?token=${TOKEN}`))).json();
+    assert.equal(body.tunnel.host, 'demo.trycloudflare.com');
+    assert.equal(body.tunnel.url, 'https://demo.trycloudflare.com');
+    assert.ok(Array.isArray(body.sessions), 'the sessions snapshot is still there');
+  } finally {
+    await s.close();
+  }
+});
+
+test('setTunnel normalises the hostname it is given', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    s.server.setTunnel({ ...TUNNEL, host: '  DEMO.TryCloudflare.com ' });
+    const res = await s.raw('/api/health', { host: 'demo.trycloudflare.com' });
+    assert.equal(res.status, 200);
   } finally {
     await s.close();
   }
