@@ -63,7 +63,7 @@ export function patchFromRow(row, { context = null, model = null } = {}) {
   return patch;
 }
 
-const SESSION_COLS =
+export const SESSION_COLS =
   'id, directory, title, model, agent, time_created, time_updated, time_archived, tokens_output, tokens_reasoning';
 
 function baseEvent(ts, sessionId, kind) {

@@ -12,6 +12,7 @@ import { describeArgs } from '../src/util.js';
 import { loadSqlite } from '../src/sqlite-poll.js';
 import { OpencodeSource, capabilities as opencodeCaps } from '../src/sources/opencode/index.js';
 import { HermesSource, patchFromRow as hermesPatch } from '../src/sources/hermes/index.js';
+import { listSessions, loadSession } from '../src/history.js';
 
 function tmpdir(name) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `cctv-${name}-`));
@@ -347,6 +348,64 @@ test('hermes: new messages after bootstrap arrive by id cursor', { skip: !sqlite
   const texts = updates.flatMap((u) => u.events).filter((e) => e.kind === 'assistant_text');
   assert.equal(texts.length, 1);
   assert.match(texts[0].detail, /flashed and verified/);
+});
+
+/* ── history for the new sources ───────────────────────────────────────── */
+
+test('history lists gemini, opencode and hermes side by side', { skip: !sqlite }, () => {
+  const geminiRoot = writeChat([
+    header,
+    { id: 'm1', timestamp: new Date(NOW - 30e3).toISOString(), type: 'user', content: [{ text: 'gemini work' }] },
+  ]);
+  const { file: ocFile } = opencodeFixture();
+  const { file: hFile } = hermesFixture();
+
+  const { sessions } = listSessions({
+    roots: [{ source: 'gemini', root: geminiRoot }],
+    dbs: [
+      { source: 'opencode', dbPath: ocFile },
+      { source: 'hermes', dbPath: hFile },
+    ],
+  });
+
+  const bySource = Object.fromEntries(sessions.map((s) => [s.source, s]));
+  assert.equal(bySource.gemini.cwd, '/home/u/myproject', 'cwd comes from .project_root, listing included');
+  assert.equal(bySource.gemini.project, 'myproject');
+  assert.equal(bySource.opencode.title, 'Fix the tests');
+  assert.equal(bySource.hermes.title, 'Wire the sensor');
+  assert.equal(bySource.hermes.gitBranch, 'main');
+  assert.ok(!sessions.some((s) => s.id === 'ses_child'), 'subagents stay out of the archive too');
+
+  const live = listSessions({
+    roots: [],
+    dbs: [{ source: 'opencode', dbPath: ocFile }],
+    live: new Set(['ses_1']),
+  });
+  assert.equal(live.sessions.length, 0, 'a session on the wall is not also in the archive');
+});
+
+test('an opencode session reads back through the same mappers it had live', { skip: !sqlite }, () => {
+  const { file } = opencodeFixture();
+  const detail = loadSession('ses_1', { roots: [], dbs: [{ source: 'opencode', dbPath: file }] });
+  assert.equal(detail.historical, true);
+  assert.equal(detail.state, 'ended', 'a session read from the archive is stated as over, not guessed at');
+  assert.equal(detail.project, 'proj');
+  assert.deepEqual(
+    detail.events.map((e) => e.kind),
+    ['prompt', 'thinking', 'tool_start', 'tool_end', 'turn_end']
+  );
+  assert.equal(detail.usage.context, 9300, 'the same token arithmetic as a live tile');
+  assert.equal(loadSession('ses_child', { roots: [], dbs: [{ source: 'opencode', dbPath: file }] }), null, 'subagent sessions do not open');
+});
+
+test('a hermes session reads back with its tool calls paired', { skip: !sqlite }, () => {
+  const { file } = hermesFixture();
+  const detail = loadSession('h1', { roots: [], dbs: [{ source: 'hermes', dbPath: file }] });
+  assert.equal(detail.historical, true);
+  assert.equal(detail.gitBranch, 'main');
+  assert.deepEqual(detail.events.map((e) => e.kind), ['prompt', 'tool_start', 'tool_end']);
+  assert.equal(detail.events[1].detail, 'make flash');
+  assert.equal(loadSession('h2', { roots: [], dbs: [{ source: 'hermes', dbPath: file }] }), null, 'gateway sessions do not open');
 });
 
 test('hermes patch: ended is a fact with a reason, never a guess', () => {

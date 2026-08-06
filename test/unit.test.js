@@ -330,14 +330,14 @@ test('history lists finished sessions and leaves the live ones to the wall', () 
   ]);
   const roots = [{ source: 'claude-code', root }];
 
-  const all = listSessions({ roots });
+  const all = listSessions({ roots, dbs: [] });
   assert.equal(all.sessions.length, 1);
   assert.equal(all.sessions[0].id, SESSION);
   assert.equal(all.sessions[0].project, 'myproj', 'the project is read without parsing the whole file');
   assert.equal(all.sessions[0].title, 'do the thing', 'failing an ai-title, the first prompt identifies it');
 
   // A session already on the wall is not also in the archive.
-  const filtered = listSessions({ roots, live: new Set([SESSION]) });
+  const filtered = listSessions({ roots, dbs: [], live: new Set([SESSION]) });
   assert.equal(filtered.sessions.length, 0);
   assert.equal(filtered.total, 0);
 });
@@ -350,8 +350,8 @@ test('history honours the window it was asked for', () => {
   const old = Date.now() - 30 * 24 * 60 * 60e3;
   fs.utimesSync(file, new Date(old), new Date(old));
 
-  assert.equal(listSessions({ roots, sinceMs: 7 * 24 * 60 * 60e3 }).sessions.length, 0, 'outside a week');
-  assert.equal(listSessions({ roots, sinceMs: 60 * 24 * 60 * 60e3 }).sessions.length, 1, 'inside two months');
+  assert.equal(listSessions({ roots, dbs: [], sinceMs: 7 * 24 * 60 * 60e3 }).sessions.length, 0, 'outside a week');
+  assert.equal(listSessions({ roots, dbs: [], sinceMs: 60 * 24 * 60 * 60e3 }).sessions.length, 1, 'inside two months');
 });
 
 test('a past session reads back through the same normalization it had when live', () => {
@@ -368,7 +368,7 @@ test('a past session reads back through the same normalization it had when live'
     { type: 'user', sessionId: SESSION, uuid: 'u2', timestamp: '2026-08-05T10:00:03Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false }] } },
   ]);
 
-  const detail = loadSession(SESSION, { roots: [{ source: 'claude-code', root }] });
+  const detail = loadSession(SESSION, { roots: [{ source: 'claude-code', root }], dbs: [] });
   assert.equal(detail.id, SESSION);
   assert.equal(detail.historical, true);
   assert.equal(detail.state, 'ended', 'a session read from the archive is stated as over, not guessed at');
@@ -377,7 +377,7 @@ test('a past session reads back through the same normalization it had when live'
   assert.deepEqual(detail.events.map((e) => e.kind), ['prompt', 'tool_start', 'tool_end']);
   assert.equal(detail.events[1].detail, 'npm test');
   assert.equal(detail.usage.context, 40_004, 'the same token arithmetic as a live tile');
-  assert.equal(loadSession('nope-not-a-session', { roots: [{ source: 'claude-code', root }] }), null);
+  assert.equal(loadSession('nope-not-a-session', { roots: [{ source: 'claude-code', root }], dbs: [] }), null);
 });
 
 /* ── token accounting ──────────────────────────────────────────────────── */
