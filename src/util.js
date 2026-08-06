@@ -45,6 +45,30 @@ export function projectName(cwd) {
   return base;
 }
 
+/**
+ * The one argument that identifies a structured tool call, for a tile's
+ * banner. Gemini and Hermes both hand us real objects (unlike Codex's JS
+ * source strings), so one picker serves them both: prefer the argument a
+ * person would recognise, and show a bare filename rather than a full path.
+ */
+export function describeArgs(args) {
+  if (!args || typeof args !== 'object') return '';
+  const first =
+    args.command ??
+    args.prompt ??
+    args.query ??
+    args.pattern ??
+    args.absolute_path ??
+    args.file_path ??
+    args.path ??
+    args.url ??
+    args.description ??
+    Object.values(args).find((v) => typeof v === 'string' && v.trim());
+  if (typeof first !== 'string') return '';
+  const isPath = first === args.absolute_path || first === args.file_path || first === args.path;
+  return truncate(isPath ? path.basename(first) : first, 220);
+}
+
 /** Bounded array that drops the oldest entries. */
 export class Ring {
   constructor(limit = 200) {

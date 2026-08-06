@@ -8,6 +8,9 @@ import { SPOOL_FILE, DEFAULT_HOST, DEFAULT_PORT } from './paths.js';
 import { safeJson } from './util.js';
 import { ClaudeCodeSource, capabilities, SOURCE as CLAUDE } from './sources/claude-code/index.js';
 import { CodexSource, capabilities as codexCapabilities, SOURCE as CODEX } from './sources/codex/index.js';
+import { GeminiSource, capabilities as geminiCapabilities, SOURCE as GEMINI } from './sources/gemini/index.js';
+import { OpencodeSource, capabilities as opencodeCapabilities, SOURCE as OPENCODE } from './sources/opencode/index.js';
+import { HermesSource, capabilities as hermesCapabilities, SOURCE as HERMES } from './sources/hermes/index.js';
 import { fromHook } from './sources/claude-code/hooks.js';
 import { readTasks } from './sources/claude-code/tasks.js';
 import { listSessions, loadSession } from './history.js';
@@ -148,11 +151,23 @@ export function createServer({
   /** Every source is just a thing that emits `{sessionId, patch, events}`. */
   let sources = [];
   if (withSource) {
-    sources = [new ClaudeCodeSource(), new CodexSource()];
+    sources = [
+      new ClaudeCodeSource(),
+      new CodexSource(),
+      new GeminiSource(),
+      new OpencodeSource(),
+      new HermesSource(),
+    ];
     for (const s of sources) s.on('update', (u) => store.apply(u));
     // Keyed by source: authority over a session's state belongs to whichever
     // agent produced it, and they do not all have the same reach.
-    store.capabilities = { [CLAUDE]: capabilities(), [CODEX]: codexCapabilities() };
+    store.capabilities = {
+      [CLAUDE]: capabilities(),
+      [CODEX]: codexCapabilities(),
+      [GEMINI]: geminiCapabilities(),
+      [OPENCODE]: opencodeCapabilities(),
+      [HERMES]: hermesCapabilities(),
+    };
   }
 
   /** Constant-time compare — this is a shared secret on a network-reachable port. */
@@ -219,7 +234,26 @@ export function createServer({
   /** The store is about sessions, and a tunnel is not one. Merged here. */
   const snapshot = () => ({ ...store.snapshot(), tunnel });
 
-  const server = http.createServer(async (req, res) => {
+  /*
+    Every throw inside the handler has to land here.
+
+    The handler is async, so an uncaught throw is an unhandled rejection, and
+    Node exits the process on those — one malformed request line would take the
+    wall down for everyone watching it. Two of them are reachable from the
+    network and neither is exotic: `new URL()` rejects an absolute-form target
+    like `GET http://[bad`, which Node hands through in req.url verbatim and
+    which is parsed *before* the token gate, and decodeURIComponent() rejects a
+    stray `%` in a session id below.
+  */
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch(() => {
+      try {
+        json(res, 400, { error: 'bad request' });
+      } catch {}
+    });
+  });
+
+  async function handle(req, res) {
     if (!hostAllowed(req, allowed, tunnel?.host)) return json(res, 403, { error: 'bad host' });
     if (!originAllowed(req, allowed, tunnel?.host)) return json(res, 403, { error: 'bad origin' });
 
@@ -371,7 +405,7 @@ export function createServer({
       });
       res.end(req.method === 'HEAD' ? undefined : data);
     });
-  });
+  }
 
   server.on('listening', () => {
     drainSpool(store);
@@ -381,16 +415,35 @@ export function createServer({
   const sweeper = setInterval(() => store.sweep(), 5000);
   sweeper.unref();
 
-  server.on('close', () => {
-    stopViews();
-    clearInterval(sweeper);
-    for (const s of sources) s.stop();
-    for (const res of clients) {
-      try {
-        res.end();
-      } catch {}
+  /*
+    Teardown runs when close is *asked for*, not when it finishes.
+
+    http.Server#close() waits for every in-flight request, and an SSE stream is
+    a request that never finishes by design — so with one dashboard tab open,
+    'close' never fires. Hanging the cleanup off that event put the line that
+    ends the streams behind the very condition it exists to clear, and ctrl-c
+    fell through to bin/cctv.js's 1500 ms hard exit every time.
+  */
+  let closing = false;
+  const realClose = server.close.bind(server);
+  server.close = (cb) => {
+    if (!closing) {
+      closing = true;
+      stopViews();
+      clearInterval(sweeper);
+      for (const s of sources) s.stop();
+      for (const res of clients) {
+        try {
+          res.end();
+        } catch {}
+      }
+      clients.clear();
+      // A browser holds its connection open between requests too, and that
+      // also counts as in-flight for close().
+      server.closeIdleConnections?.();
     }
-  });
+    return realClose(cb);
+  };
 
   server.store = store;
   server.sources = sources;

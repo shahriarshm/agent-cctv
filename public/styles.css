@@ -1230,6 +1230,16 @@ body[data-stale='true'] .archive {
   color: var(--ink-2);
 }
 
+/* Both this and .state-tag need a min-width, because a flex item defaults to
+   min-width: auto and will not shrink below its own text — so the ellipsis
+   never fires and the tile's overflow:hidden cuts the word off mid-glyph.
+
+   The lopsided shrink weight is what decides who gives way first. The name
+   yields almost all of it and stops at a floor, because a project reduced past
+   about eight characters has stopped identifying anything; only then does the
+   tag start to lose its own text. Shrinking them evenly turned "IDLE" into
+   "I…" beside a long repository name, and the state is the one word on a tile
+   that has to be readable at a glance. */
 .tile-name {
   font-weight: 600;
   font-size: var(--t-ui);
@@ -1238,6 +1248,8 @@ body[data-stale='true'] .archive {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 0 999 auto;
+  min-width: 8ch;
 }
 
 .tile-head-spacer {
@@ -1251,18 +1263,25 @@ body[data-stale='true'] .archive {
   display: flex;
   gap: var(--s2);
   align-items: baseline;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .state-tag .word {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
+/* The elapsed time is four characters and the thing you read to judge whether
+   a tile is stuck. It never gives way to a long reason beside it. */
 .state-tag .dur {
   color: var(--ink-3);
   font-size: var(--t-meta);
+  flex: none;
 }
 
 .tile[data-state='busy'] .state-tag .word {
@@ -1518,7 +1537,23 @@ body[data-stale='true'] .archive {
   display: flex;
   gap: var(--s2);
   white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* The tallies are two or three characters each and are the point of the strip;
+   the branch is the only thing here that can run long, so it is the only thing
+   that gives way. Left unshrinkable, a long branch name pushed the cwd and the
+   tool count off the tile and then clipped itself against its edge. */
+.counts > * {
   flex: none;
+}
+
+.branch {
+  flex: 0 1 auto;
+  min-width: 4ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .branch::before {
@@ -2048,7 +2083,11 @@ body[data-stale='true'] .archive {
    that a single session's timeline never does. */
 .tail-who {
   display: inline-block;
-  min-width: 120px;
+  /* A width, not a min-width. An inline-block grows past a minimum to fit its
+     text, so the ellipsis below never fired and one long project name shoved
+     every label on its row out of the column the other rows line up in —
+     which is the whole reason the tail reads as a stream rather than a list. */
+  width: 120px;
   margin-right: var(--s2);
   color: var(--ink-3);
   font-size: var(--t-meta);
@@ -2078,7 +2117,10 @@ body[data-stale='true'] .archive {
 .save-scrim {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  /* --scrim, like every other backdrop. --bg does not exist, which made the
+     whole declaration invalid and the save dialog the one modal with nothing
+     dimmed behind it. */
+  background: var(--scrim);
   z-index: 40;
 }
 

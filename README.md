@@ -1,7 +1,7 @@
 # agent-cctv
 
 A live wall of what every coding agent on your machine is doing —
-Claude Code and Codex CLI, side by side.
+Claude Code, Codex CLI, Gemini CLI, OpenCode and Hermes, side by side.
 
 ```
 npx agent-cctv
@@ -152,9 +152,11 @@ The YAML is a deliberately small subset — comments, `key: value`, quoted strin
 lists and nested maps — and it refuses anything else by line number rather than
 guessing. agent-cctv has no dependencies, so this is a parser we own, and one
 that quietly misreads `branch: "feat/*" # temporary` would put the wrong sessions
-on the wall while looking entirely confident. (One consequence worth knowing:
-`cwd: */scratch/*` is a YAML alias, so globs that start with `*` need quoting.
-The parser tells you so.)
+on the wall while looking entirely confident. (Two consequences worth knowing:
+`cwd: */scratch/*` is a YAML alias, so globs that start with `*` need quoting —
+the parser tells you so. And inside double quotes the only escapes are `\"` and
+`\\`; anything else is refused by name, rather than read as the backslash it
+isn't.)
 
 `AGENT_CCTV_VIEWS_DIR` moves the directory. On the team deployment below it
 follows `AGENT_CCTV_HOME` to `/var/lib/agent-cctv/views`, where one set of views
@@ -293,6 +295,9 @@ it never writes to Claude's state and never sits in the path of your agents.
 | `~/.claude/tasks/<session>/*.json` | The session's task list. |
 | `~/.codex/sessions/**/rollout-*.jsonl` | Codex CLI activity — prompts, messages, reasoning, tool calls, turn boundaries. Same byte-offset tail. |
 | `~/.codex/session_index.jsonl` | Codex thread names, so a Codex tile has a title instead of a uuid. |
+| `~/.gemini/tmp/*/chats/session-*.jsonl` | Gemini CLI activity — prompts, thoughts, tool calls. Same byte-offset tail; the cwd comes from the `.project_root` file beside each log. |
+| `~/.local/share/opencode/opencode.db` | OpenCode sessions, messages and tool calls, polled read-only out of its sqlite database. |
+| `~/.hermes/state.db` | Hermes CLI sessions — cwd, git branch, title, and a real `ended_at`. Same read-only sqlite poll. |
 
 Liveness is a real `kill(pid, 0)` against the registry's pid, with the recorded
 process start time checked once to catch pid reuse. A session that isn't in the
@@ -480,7 +485,7 @@ record, and on this topology they are on the same disk.
   agents' shell. This is a documented limitation of the systemd deployment,
   not a blocker — hooks are opt-in, and everything else works without them.
 
-## Codex, and what a second agent costs
+## The other agents, and what each one costs
 
 Codex CLI sessions appear on the same wall, from `~/.codex/sessions/`. They give
 you what a Codex session is doing — the prompt, the running `exec` and its actual
@@ -505,6 +510,23 @@ This is why authority is tracked per source rather than globally: a working
 Claude registry must not suppress inference for a Codex session it knows nothing
 about.
 
+**Gemini CLI** is the same bargain from a different log: per-project JSONL under
+`~/.gemini/tmp/`, no registry, no approval record, so state is inferred from
+activity. Its one nicety is the `.project_root` file beside each log, which
+makes the tile's cwd exact rather than parsed out of a message.
+
+**OpenCode and Hermes keep sessions in sqlite**, so those two adapters poll
+their databases read-only (~2 s) instead of tailing a file — WAL commits do not
+reliably touch the database file, so watching it would miss them. This needs
+`node:sqlite`, which shipped unflagged in Node 22.13; on an older Node the two
+adapters report themselves unavailable in `doctor` and the rest of the wall
+runs normally. Neither records a pending approval — OpenCode's `permission`
+table is a remembered allowlist, not a queue of prompts — so no urgent light
+here either. Hermes stands slightly apart: its sessions table records a real
+`ended_at` with a reason, so a finished Hermes session retires promptly instead
+of waiting out the silence sweep, and its cwd, git branch and title come from
+columns rather than parsing.
+
 ## Adding other agents
 
 A source is anything that emits `{sessionId, patch, events}`. The store and UI
@@ -512,8 +534,12 @@ know nothing about either source beyond that normalized shape. The awkward part 
 following an append-only JSONL log by byte offset, stitching partial lines,
 starting mid-file, surviving truncation — is in `src/tail.js` and shared; a
 source subclasses `JsonlTailer` and says only what its files are called and what
-its lines mean. `src/sources/claude-code/` and `src/sources/codex/` are both
-about 200 lines of mapping table on top of it.
+its lines mean. `src/sources/claude-code/`, `src/sources/codex/` and
+`src/sources/gemini/` are each a couple hundred lines of mapping table on top
+of it. Agents that keep sessions in sqlite instead get the same treatment from
+`src/sqlite-poll.js` — read-only open, capability gate, retry-not-crash — with
+`src/sources/opencode/` and `src/sources/hermes/` supplying only the queries
+and the row-to-event mapping.
 
 Event kinds are deliberately few: `prompt`, `assistant_text`, `thinking`,
 `tool_start`, `tool_end`, `turn_end`, `queued`, `session_start`, `session_end`.
@@ -532,7 +558,8 @@ silently showing stale states.
 
 Agent marks are from [simple-icons](https://github.com/simple-icons/simple-icons)
 (CC0 1.0, public domain), inlined in `public/icons.js` so the dashboard works
-offline. Codex has a neutral placeholder — simple-icons publishes no OpenAI mark.
+offline. Codex, OpenCode and Hermes have neutral placeholders — simple-icons
+publishes no mark for any of them.
 
 ## Development
 

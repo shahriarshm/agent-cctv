@@ -619,7 +619,19 @@ function openDrawer() {
   closeBtn.focus();
 }
 
+/*
+  Which fetch the drawer is still waiting for.
+
+  Both openers write into the same three nodes, and neither response is
+  guaranteed to be the slower one. Clicking one tile and then another before
+  the first answered left the drawer showing the first session while the wall
+  highlighted the second. Focus mode's backfill has always checked this; the
+  drawer did not.
+*/
+let drawerWant = 0;
+
 async function openInspector(id) {
+  const mine = ++drawerWant;
   selected = id;
   openDrawer();
   for (const [tid, tile] of tiles) tile.dataset.selected = String(tid === id);
@@ -627,8 +639,9 @@ async function openInspector(id) {
   if (s) renderInspectorMeta(s);
   try {
     const res = await fetch(api(`/api/session/${encodeURIComponent(id)}`));
-    if (!res.ok) return;
+    if (!res.ok || mine !== drawerWant) return;
     const detail = await res.json();
+    if (mine !== drawerWant) return;
     renderInspectorMeta(detail);
     renderTasks(detail.tasks);
     inspectorTimeline.render(detail.events || []);
@@ -779,7 +792,11 @@ function dayLabel(ts) {
   return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
+/** Same reason as drawerWant: a 90-day read started first can land last. */
+let archiveWant = 0;
+
 async function loadArchive() {
+  const mine = ++archiveWant;
   archiveList.replaceChildren(el('div', 'archive-empty', 'Reading…'));
   let data;
   try {
@@ -787,9 +804,12 @@ async function loadArchive() {
     if (!res.ok) throw new Error('failed');
     data = await res.json();
   } catch {
-    archiveList.replaceChildren(el('div', 'archive-empty', 'Could not read the archive.'));
+    if (mine === archiveWant) {
+      archiveList.replaceChildren(el('div', 'archive-empty', 'Could not read the archive.'));
+    }
     return;
   }
+  if (mine !== archiveWant) return;
 
   archiveCount.textContent = data.total
     ? `${data.total} session${data.total === 1 ? '' : 's'}${data.truncated ? ` · showing ${data.sessions.length}` : ''}`
@@ -832,6 +852,7 @@ async function loadArchive() {
 }
 
 async function openHistory(id) {
+  const mine = ++drawerWant;
   // A past session is not on the wall, so nothing is selected — the inspector
   // is just the viewer.
   selected = null;
@@ -844,16 +865,18 @@ async function openHistory(id) {
 
   try {
     const res = await fetch(api(`/api/history/${encodeURIComponent(id)}`));
+    if (mine !== drawerWant) return;
     if (!res.ok) {
       titleEl.textContent = 'That session is no longer readable.';
       return;
     }
     const detail = await res.json();
+    if (mine !== drawerWant) return;
     renderInspectorMeta(detail);
     renderTasks(detail.tasks);
     inspectorTimeline.render(detail.events || []);
   } catch {
-    titleEl.textContent = 'Could not read that session.';
+    if (mine === drawerWant) titleEl.textContent = 'Could not read that session.';
   }
 }
 
@@ -1438,7 +1461,18 @@ async function loadViewCatalog() {
   try {
     const res = await fetch(api('/api/views'), { credentials: 'same-origin' });
     if (!res.ok) return;
-    applyView(setViews(await res.json()));
+    /*
+      The catalog arriving is not a switch, so it must not re-seed.
+
+      Restoring a stored view and then seeding from it undid the mode and
+      group-by this browser was left on — and applyView() persists, so the
+      clobber survived the next reload too. Everything's own `mode: 'wall'` made
+      that the common case: any tab left in tail or focus came back as a wall.
+
+      A ?view= link is the exception. Nobody chose the stored mode for that
+      view in this browser, so the view still gets to say how it is drawn.
+    */
+    applyView(setViews(await res.json()), { seedGroup: !!viewParam });
   } catch {}
 }
 

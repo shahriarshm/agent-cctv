@@ -105,13 +105,20 @@ export function parseYaml(text) {
 }
 
 /** A `#` starts a comment only at the start of a line or after whitespace, and
- *  never inside quotes — so `web#1` and `"a # b"` both survive intact. */
+ *  never inside quotes — so `web#1` and `"a # b"` both survive intact.
+ *
+ *  A backslash inside double quotes escapes the next character, exactly as
+ *  scalarText() writes it. Reading `\"` as a closing quote instead put the scan
+ *  back outside the string, where the next `#` looked like a real comment and
+ *  took the rest of the value with it — silently, which is the one outcome this
+ *  file exists to prevent. */
 function stripComment(row) {
   let quote = null;
   for (let i = 0; i < row.length; i++) {
     const ch = row[i];
     if (quote) {
-      if (ch === quote) quote = null;
+      if (quote === '"' && ch === '\\') i++;
+      else if (ch === quote) quote = null;
     } else if (ch === '"' || ch === "'") {
       quote = ch;
     } else if (ch === '#' && (i === 0 || /\s/.test(row[i - 1]))) {
@@ -119,6 +126,39 @@ function stripComment(row) {
     }
   }
   return row;
+}
+
+/**
+ * The body of a quoted scalar, with escapes undone.
+ *
+ * Only `\\` and `\"` are understood, because they are the only two scalarText()
+ * emits; anything else is refused rather than guessed at. Single quotes carry no
+ * escapes at all, which is also how YAML reads them.
+ *
+ * Slicing the quotes off instead — `s.slice(1, -1)` — meant a written `\\` came
+ * back doubled, so a Windows path or a regex-ish pattern grew a backslash on
+ * every save/load cycle.
+ */
+function unquote(s, q, no) {
+  let out = '';
+  for (let i = 1; i < s.length; i++) {
+    const ch = s[i];
+    if (q === '"' && ch === '\\') {
+      const next = s[i + 1];
+      if (next !== '\\' && next !== '"') {
+        throw new YamlError(`unknown escape "\\${next ?? ''}" — only \\\\ and \\" are understood`, no);
+      }
+      out += next;
+      i++;
+      continue;
+    }
+    if (ch === q) {
+      if (i !== s.length - 1) throw new YamlError('trailing text after a quoted string', no);
+      return out;
+    }
+    out += ch;
+  }
+  throw new YamlError('unterminated quoted string', no);
 }
 
 function scalar(s, no) {
@@ -140,10 +180,7 @@ function scalar(s, no) {
     throw new YamlError(`a value starting with * is a YAML alias — quote it: "${s}"`, no);
   }
   for (const q of ['"', "'"]) {
-    if (s.startsWith(q)) {
-      if (s.length < 2 || !s.endsWith(q)) throw new YamlError('unterminated quoted string', no);
-      return s.slice(1, -1);
-    }
+    if (s.startsWith(q)) return unquote(s, q, no);
   }
   if (s === 'true') return true;
   if (s === 'false') return false;
@@ -159,8 +196,15 @@ function splitInline(s, no) {
   const out = [];
   let cur = '';
   let quote = null;
-  for (const ch of s) {
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
     if (quote) {
+      // Same escape rule as stripComment: an escaped quote does not end the
+      // item, or a comma inside it would split one value into two.
+      if (quote === '"' && ch === '\\' && i + 1 < s.length) {
+        cur += ch + s[++i];
+        continue;
+      }
       if (ch === quote) quote = null;
       cur += ch;
     } else if (ch === '"' || ch === "'") {
@@ -241,7 +285,10 @@ function needsQuote(s) {
     s === '' ||
     s !== s.trim() ||
     /^[*&!|>%@`#-]/.test(s) ||
-    /[:#]/.test(s) ||
+    // A comma is a separator inside an inline list, and a quote reads as the
+    // start of one: written bare, `p,q` comes back as two items and `x"y` as an
+    // unterminated string.
+    /[:#,"']/.test(s) ||
     /^(true|false|null|~)$/.test(s) ||
     /^-?\d+$/.test(s) ||
     /^[[{]/.test(s)

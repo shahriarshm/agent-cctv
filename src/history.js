@@ -1,11 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Store, serialize } from './store.js';
-import { CLAUDE_PROJECTS, CODEX_SESSIONS, CODEX_INDEX } from './paths.js';
+import { CLAUDE_PROJECTS, CODEX_SESSIONS, CODEX_INDEX, GEMINI_TMP, OPENCODE_DB, HERMES_DB } from './paths.js';
 import { TranscriptTailer } from './sources/claude-code/transcript.js';
 import { RolloutTailer } from './sources/codex/rollout.js';
+import { ChatTailer } from './sources/gemini/chats.js';
 import { patchFromMeta as claudePatch, SOURCE as CLAUDE } from './sources/claude-code/index.js';
 import { patchFromMeta as codexPatch, SOURCE as CODEX } from './sources/codex/index.js';
+import { patchFromMeta as geminiPatch, SOURCE as GEMINI } from './sources/gemini/index.js';
+import * as opencode from './sources/opencode/index.js';
+import * as hermes from './sources/hermes/index.js';
+import { loadSqlite } from './sqlite-poll.js';
 import { projectName, safeJson, truncate } from './util.js';
 
 /**
@@ -33,14 +38,126 @@ const PEEK_BYTES = 16 * 1024;
 const ADAPTERS = {
   [CLAUDE]: { Tailer: TranscriptTailer, patch: claudePatch },
   [CODEX]: { Tailer: RolloutTailer, patch: codexPatch },
+  [GEMINI]: { Tailer: ChatTailer, patch: geminiPatch },
 };
 
 export function defaultRoots() {
   return [
     { source: CLAUDE, root: CLAUDE_PROJECTS },
     { source: CODEX, root: CODEX_SESSIONS, index: CODEX_INDEX },
+    { source: GEMINI, root: GEMINI_TMP },
   ];
 }
+
+/**
+ * The sqlite-backed agents contribute the same two operations from queries:
+ * listing recent sessions is one indexed read, opening one replays its rows
+ * through the same event mappers the live source uses. Cheaper than any
+ * file peek, and read-through all the same — the database stays where the
+ * agent put it.
+ */
+export function defaultDbs() {
+  return [
+    { source: opencode.SOURCE, dbPath: OPENCODE_DB },
+    { source: hermes.SOURCE, dbPath: HERMES_DB },
+  ];
+}
+
+function openDb(dbPath) {
+  const sqlite = loadSqlite();
+  if (!sqlite || !fs.existsSync(dbPath)) return null;
+  try {
+    return new sqlite.DatabaseSync(dbPath, { readOnly: true });
+  } catch {
+    return null; // a WAL database whose owner is away; history just goes quiet
+  }
+}
+
+const SQLITE_HISTORY = {
+  [opencode.SOURCE]: {
+    list(db, cutoff) {
+      return db
+        .prepare(
+          `SELECT id, directory, title, model, time_created, time_updated
+             FROM session WHERE parent_id IS NULL AND time_updated >= ? ORDER BY time_updated DESC`
+        )
+        .all(cutoff)
+        .map((r) => ({
+          id: r.id,
+          endedAt: r.time_updated,
+          bytes: null,
+          cwd: r.directory || '',
+          gitBranch: null,
+          model: r.model,
+          title: r.title ? truncate(r.title, 200) : null,
+        }));
+    },
+    load(db, id) {
+      const row = db
+        .prepare(`SELECT ${opencode.SESSION_COLS} FROM session WHERE parent_id IS NULL AND id = ?`)
+        .get(id);
+      if (!row) return null;
+      const state = opencode.newPartState();
+      const meta = {};
+      const events = [];
+      const parts = db
+        .prepare(
+          `SELECT p.id, p.session_id, p.time_created, p.time_updated, p.data, m.data AS mdata
+             FROM part p JOIN message m ON m.id = p.message_id
+            WHERE p.session_id = ? ORDER BY p.time_created, p.id`
+        )
+        .all(id);
+      let model = null;
+      for (const p of parts) {
+        const m = safeJson(p.mdata) || {};
+        if (m.modelID) model = m.modelID;
+        events.push(...opencode.eventsFromPart(p, m.role, state, meta));
+      }
+      return { patch: opencode.patchFromRow(row, { context: meta.context, model }), events, endedAt: row.time_updated };
+    },
+  },
+  [hermes.SOURCE]: {
+    list(db, cutoff) {
+      return db
+        .prepare(
+          `SELECT ${hermes.SESSION_COLS} FROM sessions
+            WHERE source = 'cli' AND parent_session_id IS NULL
+              AND COALESCE(ended_at, started_at) * 1000 >= ?
+            ORDER BY started_at DESC`
+        )
+        .all(cutoff)
+        .map((r) => ({
+          id: r.id,
+          endedAt: Math.round((r.ended_at || r.started_at) * 1000),
+          bytes: null,
+          cwd: r.cwd || '',
+          gitBranch: r.git_branch,
+          model: r.model,
+          title: r.title ? truncate(r.title, 200) : null,
+        }));
+    },
+    load(db, id) {
+      const row = db
+        .prepare(`SELECT ${hermes.SESSION_COLS} FROM sessions WHERE source = 'cli' AND parent_session_id IS NULL AND id = ?`)
+        .get(id);
+      if (!row) return null;
+      const calls = new Map();
+      const events = [];
+      const messages = db
+        .prepare(
+          `SELECT id, session_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, reasoning_content
+             FROM messages WHERE session_id = ? AND active = 1 ORDER BY id`
+        )
+        .all(id);
+      for (const m of messages) events.push(...hermes.eventsFromMessage(m, calls));
+      return {
+        patch: hermes.patchFromRow(row),
+        events,
+        endedAt: Math.round((row.ended_at || row.started_at) * 1000),
+      };
+    },
+  },
+};
 
 /** Summaries are keyed by file identity, so a re-listing costs nothing. */
 const peekCache = new Map();
@@ -143,7 +260,27 @@ function* index(roots) {
  * Sessions that finished within the window. `live` ids are excluded so the
  * history panel is strictly "things not already on the wall".
  */
-export function listSessions({ sinceMs = 7 * 24 * 60 * 60e3, limit = 300, live = new Set(), roots = defaultRoots() } = {}) {
+/** Gemini keeps the cwd beside the log, not inside it. */
+function geminiCwd(file) {
+  try {
+    return (
+      fs
+        .readFileSync(path.join(path.dirname(path.dirname(file)), '.project_root'), 'utf8')
+        .split('\n')[0]
+        .trim() || ''
+    );
+  } catch {
+    return '';
+  }
+}
+
+export function listSessions({
+  sinceMs = 7 * 24 * 60 * 60e3,
+  limit = 300,
+  live = new Set(),
+  roots = defaultRoots(),
+  dbs = defaultDbs(),
+} = {}) {
   const cutoff = Date.now() - sinceMs;
   const titles = codexTitles(roots.find((r) => r.source === CODEX)?.index);
   const rows = [];
@@ -160,25 +297,44 @@ export function listSessions({ sinceMs = 7 * 24 * 60 * 60e3, limit = 300, live =
     rows.push({ id, source, file, endedAt: st.mtimeMs, bytes: st.size, st });
   }
 
+  for (const { source, dbPath } of dbs) {
+    const reader = SQLITE_HISTORY[source];
+    if (!reader) continue;
+    const db = openDb(dbPath);
+    if (!db) continue;
+    try {
+      for (const row of reader.list(db, cutoff)) {
+        if (live.has(row.id)) continue;
+        rows.push({ ...row, source });
+      }
+    } catch {
+      // A schema we no longer recognise lists nothing rather than throwing.
+    } finally {
+      db.close();
+    }
+  }
+
   rows.sort((a, b) => b.endedAt - a.endedAt);
   const page = rows.slice(0, limit);
 
   return {
     total: rows.length,
     truncated: rows.length > page.length,
-    sessions: page.map(({ id, source, file, endedAt, bytes, st }) => {
-      const p = peek(file, source, st);
+    sessions: page.map(({ id, source, file, endedAt, bytes, st, ...row }) => {
+      // Sqlite rows arrive already described; files still need the peek.
+      const p = file ? peek(file, source, st) : row;
+      const cwd = !file ? p.cwd : source === GEMINI ? geminiCwd(file) : p.cwd;
       return {
         id,
         source,
         endedAt,
         bytes,
-        cwd: p.cwd,
-        project: p.project,
+        cwd,
+        project: cwd ? projectName(cwd) : '',
         gitBranch: p.gitBranch,
         model: p.model,
         title: source === CODEX ? titles.get(id) || null : p.title,
-        name: p.project || id.slice(0, 8),
+        name: (cwd && projectName(cwd)) || id.slice(0, 8),
       };
     }),
   };
@@ -192,7 +348,34 @@ export function listSessions({ sinceMs = 7 * 24 * 60 * 60e3, limit = 300, live =
  * was live — rather than by a second, subtly different code path. The store is
  * discarded when this returns; nothing is retained.
  */
-export function loadSession(id, { roots = defaultRoots() } = {}) {
+export function loadSession(id, { roots = defaultRoots(), dbs = defaultDbs() } = {}) {
+  for (const { source, dbPath } of dbs) {
+    const reader = SQLITE_HISTORY[source];
+    if (!reader) continue;
+    const db = openDb(dbPath);
+    if (!db) continue;
+    let loaded = null;
+    try {
+      loaded = reader.load(db, id);
+    } catch {
+      loaded = null;
+    } finally {
+      db.close();
+    }
+    if (!loaded) continue;
+
+    const store = new Store();
+    store.capabilities = {};
+    const patch = { ...loaded.patch, state: 'ended', endedReason: 'history', authoritative: true };
+    store.apply({ sessionId: id, patch, events: loaded.events, bootstrap: true });
+    const s = store.get(id);
+    if (!s) return null;
+    const detail = serialize(s, { withEvents: true });
+    detail.historical = true;
+    detail.endedAt = loaded.endedAt;
+    return detail;
+  }
+
   for (const entry of index(roots)) {
     if (entry.id !== id) continue;
 

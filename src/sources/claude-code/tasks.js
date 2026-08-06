@@ -9,7 +9,16 @@ import { safeJson } from '../../util.js';
  * to accomplish", which no single event can.
  */
 
-const cache = new Map(); // sessionId -> {mtimeMs, tasks}
+/*
+  sessionId -> {mtimeMs, tasks}, oldest first.
+
+  Only live sessions are polled, but a process that runs for weeks meets a lot
+  of sessions, and each entry holds that session's whole task list. Insertion
+  order is reinsertion order — a re-read moves the key back to the end — so
+  dropping from the front drops whatever has been quiet longest.
+*/
+const cache = new Map();
+const MAX_CACHED = 200;
 
 export function available(dir = CLAUDE_TASKS) {
   try {
@@ -29,7 +38,12 @@ export function readTasks(sessionId, { dir = CLAUDE_TASKS } = {}) {
   }
 
   const hit = cache.get(sessionId);
-  if (hit && hit.mtimeMs === st.mtimeMs) return hit.tasks;
+  if (hit && hit.mtimeMs === st.mtimeMs) {
+    // Re-insert so a session still being read counts as recently used.
+    cache.delete(sessionId);
+    cache.set(sessionId, hit);
+    return hit.tasks;
+  }
 
   let names;
   try {
@@ -54,7 +68,9 @@ export function readTasks(sessionId, { dir = CLAUDE_TASKS } = {}) {
   }
   tasks.sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
 
+  cache.delete(sessionId);
   cache.set(sessionId, { mtimeMs: st.mtimeMs, tasks });
+  while (cache.size > MAX_CACHED) cache.delete(cache.keys().next().value);
   return tasks;
 }
 

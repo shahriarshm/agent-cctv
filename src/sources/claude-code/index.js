@@ -90,6 +90,9 @@ export class ClaudeCodeSource extends EventEmitter {
         patch: {
           state: 'ended',
           endedReason: reason,
+          // Without this, the store's own authority guard (set by this source's
+          // earlier patches) refuses the state write and the tile never retires.
+          authoritative: true,
           process: { pid, alive: false },
           currentTool: null,
           waitingFor: null,

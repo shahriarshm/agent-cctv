@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_SETTINGS, CLAUDE_DIR } from './paths.js';
 
@@ -48,8 +47,13 @@ export function readSettings(file = CLAUDE_SETTINGS) {
 
 /** Write via temp+rename so a crash or a concurrent reader never sees half a file. */
 export function writeSettings(settings, file = CLAUDE_SETTINGS) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = path.join(os.tmpdir(), `cctv-settings-${process.pid}-${Date.now()}.json`);
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  // Beside the destination, not in os.tmpdir(): rename cannot cross a
+  // filesystem, and /tmp is tmpfs on plenty of the Linux boxes this installs
+  // on — there the write did not degrade to non-atomic, it threw EXDEV and
+  // installed nothing. writeView() places its temp file the same way.
+  const tmp = path.join(dir, `.${path.basename(file)}.cctv-${process.pid}.tmp`);
   fs.writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n');
   fs.renameSync(tmp, file);
 }

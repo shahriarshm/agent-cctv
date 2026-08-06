@@ -95,10 +95,15 @@ export class CodexSource extends EventEmitter {
     } catch {
       return;
     }
+    // Rebuilt, not merged. The whole file is re-read every poll anyway, so
+    // merging only meant a thread deleted from the index kept its title here
+    // for the life of the process.
+    const titles = new Map();
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
       const rec = safeJson(line);
-      if (rec?.id && rec.thread_name) this.titles.set(rec.id, truncate(rec.thread_name, 200));
+      if (rec?.id && rec.thread_name) titles.set(rec.id, truncate(rec.thread_name, 200));
     }
+    this.titles = titles;
   }
 }

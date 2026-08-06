@@ -18,6 +18,15 @@ import { safeJson } from './util.js';
 const DEBOUNCE_MS = 120;
 const SCAN_MS = 3000;
 const MAX_SEEN = 4000;
+/**
+ * How long a file may sit untouched before its dedup set is dropped.
+ *
+ * That set holds up to MAX_SEEN/2 uuids per file, so a machine with months of
+ * transcripts kept tens of megabytes describing files nothing has written to
+ * since spring. Four times the longest fresh window any source uses; a session
+ * silent that long left the wall hours ago.
+ */
+const SHED_AFTER_MS = 4 * 60 * 60e3;
 
 export class JsonlTailer extends EventEmitter {
   constructor({ root, freshWindowMs, bootstrapBytes = 96 * 1024, maxDepth = 1, scanMs = SCAN_MS } = {}) {
@@ -122,6 +131,35 @@ export class JsonlTailer extends EventEmitter {
       if (initial) this.read(file);
       else this.schedule(file);
     }
+    this.shed();
+  }
+
+  /**
+   * Drop a long-idle file's dedup set, keeping everything else.
+   *
+   * Deleting the whole entry would be simpler and wrong: the next write to that
+   * file would look like a file we had never seen, and re-bootstrapping replays
+   * the last 96 KB — a second copy of events the session's ring may still be
+   * holding. Keeping the offset means it resumes exactly where it stopped.
+   *
+   * Only `seen` goes. A subclass's own state is not cache: `tools` and `calls`
+   * hold the *open* calls, which is how a result finds the call it belongs to.
+   * Clearing those would cost a session blocked on a permission prompt
+   * overnight the name, argument and duration of the very call it was blocked
+   * on — and that session is the one this wall exists to show you.
+   *
+   * What an empty `seen` widens: `seen` only matters after a truncate-and-
+   * replace, when the file is re-read from byte zero. Such a re-read after a
+   * shed re-emits everything as live rather than bootstrap. MAX_SEEN trimming
+   * already made that partly true for any large transcript, and nothing
+   * rewrites these logs in practice.
+   */
+  shed(now = Date.now()) {
+    for (const state of this.files.values()) {
+      if (state.shed || now - (state.readAt || 0) < SHED_AFTER_MS) continue;
+      state.seen = new Set();
+      state.shed = true;
+    }
   }
 
   /** Follow a specific file even if it falls outside the scan window. */
@@ -162,6 +200,8 @@ export class JsonlTailer extends EventEmitter {
       state.offset = 0;
       state.partial = '';
     }
+    state.readAt = Date.now();
+    state.shed = false;
     if (st.size === state.offset) {
       state.size = st.size;
       return;

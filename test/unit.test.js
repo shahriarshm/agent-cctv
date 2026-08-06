@@ -6,10 +6,10 @@ import path from 'node:path';
 
 import { describeTool, toolVerb, prettyToolName, toolCategory } from '../src/sources/claude-code/describe.js';
 import { TranscriptTailer, cleanPrompt } from '../src/sources/claude-code/transcript.js';
-import { Store } from '../src/store.js';
+import { Store, serialize } from '../src/store.js';
 import { fromHook } from '../src/sources/claude-code/hooks.js';
 import * as installer from '../src/install.js';
-import { projectSlug } from '../src/sources/claude-code/index.js';
+import { projectSlug, ClaudeCodeSource } from '../src/sources/claude-code/index.js';
 import { prose } from '../src/util.js';
 import { shouldNotify, describe as describeAlert } from '../public/notify.js';
 import { RolloutTailer } from '../src/sources/codex/rollout.js';
@@ -286,6 +286,31 @@ test('a hooks-only session that goes silent stops looking live', () => {
   assert.equal(store.get('s1').endedReason, 'silent');
 });
 
+test('a registry file vanishing retires the session, urgency included', () => {
+  // The gone patch must carry authority: the session became authoritative on
+  // `appeared`, and the store refuses a state write from anyone weaker. Losing
+  // that flag left an exited CLI's tile — urgent border and all — up forever.
+  const sessionsDir = tmpdir('sessions');
+  const src = new ClaudeCodeSource({ projectsRoot: tmpdir('projects'), sessionsDir });
+  src.caps = { ...src.caps, registry: true, tasks: false };
+  const store = new Store();
+  src.on('update', (u) => store.apply(u));
+  src.start();
+
+  const file = path.join(sessionsDir, `${process.pid}.json`);
+  fs.writeFileSync(file, JSON.stringify({ sessionId: 'gone-1', cwd: '/tmp/p', status: 'waiting', waitingFor: 'permission to run rm' }));
+  src.registry.poll();
+  assert.equal(store.get('gone-1').state, 'waiting');
+  assert.equal(serialize(store.get('gone-1')).urgent, true);
+
+  fs.rmSync(file);
+  src.registry.poll();
+  src.stop();
+  assert.equal(store.get('gone-1').state, 'ended');
+  assert.equal(store.get('gone-1').endedReason, 'file-removed');
+  assert.equal(serialize(store.get('gone-1')).urgent, false);
+});
+
 test('ended sessions leave the wall once they are stale', () => {
   const store = new Store();
   store.capabilities = { registry: true };
@@ -305,14 +330,14 @@ test('history lists finished sessions and leaves the live ones to the wall', () 
   ]);
   const roots = [{ source: 'claude-code', root }];
 
-  const all = listSessions({ roots });
+  const all = listSessions({ roots, dbs: [] });
   assert.equal(all.sessions.length, 1);
   assert.equal(all.sessions[0].id, SESSION);
   assert.equal(all.sessions[0].project, 'myproj', 'the project is read without parsing the whole file');
   assert.equal(all.sessions[0].title, 'do the thing', 'failing an ai-title, the first prompt identifies it');
 
   // A session already on the wall is not also in the archive.
-  const filtered = listSessions({ roots, live: new Set([SESSION]) });
+  const filtered = listSessions({ roots, dbs: [], live: new Set([SESSION]) });
   assert.equal(filtered.sessions.length, 0);
   assert.equal(filtered.total, 0);
 });
@@ -325,8 +350,8 @@ test('history honours the window it was asked for', () => {
   const old = Date.now() - 30 * 24 * 60 * 60e3;
   fs.utimesSync(file, new Date(old), new Date(old));
 
-  assert.equal(listSessions({ roots, sinceMs: 7 * 24 * 60 * 60e3 }).sessions.length, 0, 'outside a week');
-  assert.equal(listSessions({ roots, sinceMs: 60 * 24 * 60 * 60e3 }).sessions.length, 1, 'inside two months');
+  assert.equal(listSessions({ roots, dbs: [], sinceMs: 7 * 24 * 60 * 60e3 }).sessions.length, 0, 'outside a week');
+  assert.equal(listSessions({ roots, dbs: [], sinceMs: 60 * 24 * 60 * 60e3 }).sessions.length, 1, 'inside two months');
 });
 
 test('a past session reads back through the same normalization it had when live', () => {
@@ -343,7 +368,7 @@ test('a past session reads back through the same normalization it had when live'
     { type: 'user', sessionId: SESSION, uuid: 'u2', timestamp: '2026-08-05T10:00:03Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', is_error: false }] } },
   ]);
 
-  const detail = loadSession(SESSION, { roots: [{ source: 'claude-code', root }] });
+  const detail = loadSession(SESSION, { roots: [{ source: 'claude-code', root }], dbs: [] });
   assert.equal(detail.id, SESSION);
   assert.equal(detail.historical, true);
   assert.equal(detail.state, 'ended', 'a session read from the archive is stated as over, not guessed at');
@@ -352,7 +377,7 @@ test('a past session reads back through the same normalization it had when live'
   assert.deepEqual(detail.events.map((e) => e.kind), ['prompt', 'tool_start', 'tool_end']);
   assert.equal(detail.events[1].detail, 'npm test');
   assert.equal(detail.usage.context, 40_004, 'the same token arithmetic as a live tile');
-  assert.equal(loadSession('nope-not-a-session', { roots: [{ source: 'claude-code', root }] }), null);
+  assert.equal(loadSession('nope-not-a-session', { roots: [{ source: 'claude-code', root }], dbs: [] }), null);
 });
 
 /* ── token accounting ──────────────────────────────────────────────────── */

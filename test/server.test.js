@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import http from 'node:http';
+import net from 'node:net';
 import { createServer } from '../src/server.js';
 import { Store } from '../src/store.js';
 
@@ -431,4 +432,64 @@ test('setTunnel normalises the hostname it is given', async () => {
   } finally {
     await s.close();
   }
+});
+
+/*
+  A raw socket, not node:http — the client library refuses to *send* the request
+  lines below, which is exactly why they were never covered. Node's server hands
+  an absolute-form target through to req.url verbatim, and `new URL()` throws on
+  a malformed one before the token gate has run.
+*/
+function rawLine(port, line) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1', () => socket.write(line));
+    let body = '';
+    socket.on('data', (c) => (body += c));
+    socket.on('end', () => resolve(body));
+    socket.on('error', reject);
+  });
+}
+
+test('a malformed request target answers 400 instead of killing the process', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const reply = await rawLine(
+      s.port,
+      'GET http://[bad HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n'
+    );
+    assert.match(reply, /400/);
+    // The point of the test: the server is still answering afterwards.
+    const after = await fetch(s.url('/api/health'));
+    assert.equal(after.status, 200);
+  } finally {
+    await s.close();
+  }
+});
+
+test('a stray percent in a session id is a bad request, not a crash', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url(`/api/session/%?token=${TOKEN}`));
+    assert.equal(res.status, 400);
+    assert.equal((await fetch(s.url('/api/health'))).status, 200);
+  } finally {
+    await s.close();
+  }
+});
+
+test('close() completes with an SSE stream still open', async () => {
+  const s = await serve({ token: TOKEN });
+  const stream = await fetch(s.url(`/api/stream?token=${TOKEN}`));
+  // Read one chunk so the stream is genuinely established, then leave it open.
+  const reader = stream.body.getReader();
+  await reader.read();
+  assert.equal(s.server.clientCount(), 1);
+
+  // Without teardown on close-initiation this never resolves: close() waits on
+  // the SSE response, and the code that ends it only ran on 'close'.
+  await Promise.race([
+    s.close(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('close() hung on an open SSE client')), 3000)),
+  ]);
+  reader.cancel().catch(() => {});
 });
