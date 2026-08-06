@@ -52,13 +52,26 @@
       <div class="bar-states">
         <div class="readouts" role="group" aria-label="Filter by state">
           <button class="readout" data-filter="all" data-kind="all" type="button" aria-pressed="true">
-            <b id="stat-all">0</b><span>all</span>
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="4" width="7" height="7" rx="1" />
+              <rect x="13" y="4" width="7" height="7" rx="1" />
+              <rect x="4" y="13" width="7" height="7" rx="1" />
+              <rect x="13" y="13" width="7" height="7" rx="1" />
+            </svg>
+            <b id="stat-all">0</b><span class="clips">all</span>
           </button>
           <button class="readout" data-filter="live" data-kind="live" type="button" aria-pressed="false">
-            <b id="stat-live">0</b><span>live</span>
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="2.75" fill="currentColor" stroke="none" />
+              <path d="M6.2 6.2a8.2 8.2 0 0 0 0 11.6M17.8 17.8a8.2 8.2 0 0 0 0-11.6" />
+            </svg>
+            <b id="stat-live">0</b><span class="clips">live</span>
           </button>
           <button class="readout" data-filter="busy" data-kind="busy" type="button" aria-pressed="false">
-            <b id="stat-busy">0</b><span>working</span>
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5" />
+            </svg>
+            <b id="stat-busy">0</b><span class="clips">working</span>
           </button>
           <button
             class="readout"
@@ -68,7 +81,11 @@
             aria-pressed="false"
             data-hot="false"
           >
-            <b id="stat-attention">0</b><span>need you</span>
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 10a6 6 0 1 0-12 0c0 4.5-2 5.5-2 5.5h16s-2-1-2-5.5" />
+              <path d="M10.3 19a2.2 2.2 0 0 0 3.4 0" />
+            </svg>
+            <b id="stat-attention">0</b><span class="clips">need you</span>
           </button>
         </div>
       </div>
@@ -135,7 +152,7 @@
 
       <div class="bar-status">
         <div class="clock" id="clock">--:--:--</div>
-        <div class="link-state" id="link" data-up="false">connecting</div>
+        <div class="link-state" id="link" data-up="false"><span class="clips">connecting</span></div>
       </div>
     </header>
 

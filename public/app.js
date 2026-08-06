@@ -1117,14 +1117,27 @@ setInterval(() => {
 
 /* ── stream ────────────────────────────────────────────────────────────── */
 
+const linkWord = link.querySelector('.clips');
+
+/*
+  A lamp reading "live" next to a green dot is the dot saying it twice, and on a
+  phone that word is competing with the thing the page exists to show. A lamp
+  reading "signal lost" is the only moment the lamp is worth reading, so that
+  one keeps its word at every width — see the media query in styles.css, which
+  clips the word only while data-up is true and data-stale is not.
+*/
+function setLink(word, title) {
+  linkWord.textContent = word;
+  link.title = title || word;
+}
+
 function connect() {
   if (authFailed) {
     // No point opening an EventSource that will just 401 and retry forever —
     // and "signal lost" would tell the user the wrong thing to try (wait for
     // the network) instead of the right one (reopen the link).
     link.dataset.up = 'false';
-    link.textContent = 'no credential';
-    link.title = 'Reopen the link your operator gave you — it carries the token this page needs.';
+    setLink('no credential', 'Reopen the link your operator gave you — it carries the token this page needs.');
     document.body.dataset.stale = 'true';
     layout(); // repaint the empty card now instead of leaving "Connecting" up forever
     return;
@@ -1135,7 +1148,7 @@ function connect() {
   es.addEventListener('open', () => {
     link.dataset.up = 'true';
     link.dataset.stale = 'false';
-    link.textContent = 'live';
+    setLink('live');
     delete document.body.dataset.stale;
   });
 
@@ -1148,7 +1161,7 @@ function connect() {
    */
   es.addEventListener('error', () => {
     link.dataset.up = 'false';
-    link.textContent = 'signal lost';
+    setLink('signal lost');
     // Not on the very first connect — that is "connecting", not "went stale".
     if (booted) {
       link.dataset.stale = 'true';
