@@ -680,8 +680,10 @@ body[data-locked='true'] {
   border-style: dashed;
 }
 
-/* Cycles auto → light → dark. The glyph is the current *resolved* look, so the
-   button always shows what you are getting, not what you asked for. */
+/* Cycles auto → light → dark. The glyph is the *setting* — a half-lit circle for
+   auto, a sun, a moon — not the resolved look, so "auto" stays distinguishable
+   from an explicit light or dark that happens to match it right now. The title
+   is where the resolved look is spelled out. */
 .theme svg {
   width: 14px;
   height: 14px;

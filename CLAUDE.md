@@ -110,6 +110,17 @@ before editing:
   repository content; on a shared server, rendering it as HTML is stored XSS
   behind the SSO gate.
 
+- **The header sheds by region, in order.** `.bar` is `nowrap` and so is every
+  region inside it; the tiers in `styles.css` move whole regions into the sheet
+  rather than hiding individual controls, and nothing moves in the DOM —
+  `.bar-shelf` is `display: contents` when wide and a pinned panel when narrow.
+  Two things here look like tidiness and are not. Letting a region wrap makes it
+  take a second line the instant its contents do not fit, which is cheaper for
+  the layout engine than shrinking them, so the chips' ellipsis never fires and
+  one set filter puts the whole bar on two rows. And hiding a single control
+  inside a region does not reduce that region's minimum width, which is what the
+  tier is actually reducing.
+
 Logic worth testing is kept DOM-free so `node --test` can reach it — `notify.js`
 (when an alert may fire and what it may say), `match.js`, `format.js`.
 
@@ -134,8 +145,14 @@ a 4 KB one. Opening one replays it through the same tailer and a throwaway
   `--host 0.0.0.0` would otherwise stick forever. `resolve()` takes it as a
   parameter purely so `test/config.test.js` can prove it has no effect.
 - Lists that must stay in step by hand: `MODES` and `GROUP_BY` in `src/views.js`
-  ↔ `MODES` and `GROUPS` in `public/app.js`; `STATES` in `public/match.js` ↔ the
-  header's own filters.
+  ↔ `MODES` and `GROUPS` in `public/app.js`. The header's own two — `MODES`
+  against the mode buttons, and `STATES` in `public/match.js` against the
+  readouts' `data-filter` — are checked by `test/header-markup.test.js`, which
+  also refuses an icon-only button with no `aria-label`.
+- `--sheet-tier` in `public/styles.css` is read back by `app.js` to decide when
+  to close the sheet on a resize, but a media query cannot use a custom
+  property, so the literal in `@media (max-width: …)` beside it has to match by
+  hand. A mismatch gives you a sheet that will not close when the window widens.
 - `node:fetch` silently rewrites the `Host` header, so any allowlist test written
   with it is meaningless — `test/server.test.js` uses raw `node:http` for those.
 

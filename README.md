@@ -47,9 +47,16 @@ The four counts in the header — **all / live / working / needs you** — are a
 the state filter: each one reports a number and is the way you narrow to it, so
 the figure on a button is always exactly what clicking it leaves on the wall.
 
-Alongside them the header filters by **agent** and by **project**. Both selects
-populate themselves from what is actually on the wall, with counts, and fall back
-to "all" if their value disappears.
+Alongside them the header filters by **agent** and by **project**. Both populate
+themselves from what is actually on the wall, with counts, and fall back to "all"
+if their value disappears.
+
+They are chips rather than labelled dropdowns, and a chip only spends width when
+it is doing something: on "all" it is a dimmed icon, and the moment you set it it
+shows the value and lights up. Filtering to one agent puts that agent's own mark
+on the chip — the same mark its tiles carry. Underneath, each one is still an
+ordinary `<select>`, so the keyboard, the screen reader and your phone's native
+picker all work the way they always did.
 
 **Group by** splits the wall into labelled sections — by project, agent, state,
 or git branch — each with its own count and a note of how many feeds inside
@@ -57,10 +64,25 @@ need you. Groups are ordered by their most urgent member, so the section
 holding a blocked session is always the one at the top. Tiles are moved rather
 than rebuilt, so their activity strips keep their history across a regroup.
 
+### On a small screen
+
+The header is one row at every width, and it gives things up in a fixed order as
+it narrows: first the clock and the wordmark, then the words beside the counts,
+then the pickers and the buttons. What is left on a phone is what you opened the
+page for — how many sessions are running, how many need you, and whether the feed
+is still alive. Everything else is one tap away behind the controls button, which
+opens a sheet from the bottom where the controls get their labels back and enough
+room for a thumb.
+
+Two things never abbreviate. The counts keep their glyphs, because a row of bare
+numbers tells you nothing and colour alone is not a distinction everyone can see.
+And a lamp that has gone to **signal lost** or **no credential** keeps its words
+at every width, because that is the one moment the lamp is worth reading.
+
 ### Views
 
-The three selects are enough for one machine and not enough for a wall you keep
-open. A **view** is a named population of sessions, written as a file in
+The header's own filters are enough for one machine and not enough for a wall you
+keep open. A **view** is a named population of sessions, written as a file in
 `~/.agent-cctv/views/`. Its id is its filename; `.yaml`, `.yml` and `.json` all
 load.
 
@@ -92,7 +114,7 @@ it takes `busy`, `waiting`, `idle`, `ended`, or the two the header already think
 in, `live` and `attention`.
 
 **The view is the population; the header narrows within it.** The four counts and
-the agent and project selects all recount against the view, so the figure on a
+the agent and project chips all recount against the view, so the figure on a
 button is still exactly what clicking it leaves on the wall.
 
 Alerts follow the view — in a Frontend view you are not interrupted for a backend
@@ -104,9 +126,9 @@ thirds of it because of a dropdown three feet away is a trap.
 
 You don't have to write that file by hand. Set the header the way you want it —
 filters, grouping, mode — then pick **＋ Save current as…** at the bottom of the
-view list, give it a name, and the dashboard writes the file for you. What comes
-out is an ordinary view file: hand-editable, diffable, indistinguishable from one
-you typed.
+view chip's list, give it a name, and the dashboard writes the file for you. What
+comes out is an ordinary view file: hand-editable, diffable, indistinguishable
+from one you typed.
 
 Saving composes rather than replaces. Narrow a view that already has an
 `exclude:` block down to one project, save it, and the new view keeps the
@@ -145,7 +167,9 @@ what a kiosk screen needs.
 ### Modes
 
 **Mode** in the header is how the wall is drawn, as opposed to which sessions are
-on it. A view can carry one, so switching to a view puts you in its mode.
+on it. A view can carry one, so switching to a view puts you in its mode. It is a
+three-way toggle rather than a dropdown — each option is a picture of the layout
+it gives you, and a word beside the picture would only have said it twice.
 
 **wall** is the grid, and the default. **focus** is the spot monitor: one session
 takes the room with its live timeline underneath, and every other session sits in
@@ -164,7 +188,7 @@ than one you have to scroll yourself.
 
 ### History
 
-**History** in the header opens the archive: every session that has already left
+**History** — the clock-and-arrow button in the header — opens the archive: every session that has already left
 the wall, newest first, grouped by day, going back a day / a week / a month / three
 months. Click one and it opens in the same inspector as a live session — the full
 timeline, its tasks, its token numbers.
@@ -183,9 +207,11 @@ after its session ends.
 
 ### Light and dark
 
-The button next to Alerts cycles **Auto → Light → Dark**. Auto follows your
-system and switches with it live; either override is remembered with the rest of
-your view settings.
+The button next to Alerts cycles **Auto → Light → Dark**, and its glyph says
+which of the three you are on: a half-lit circle for Auto, a sun, a moon. Auto
+follows your system and switches with it live; either override is remembered with
+the rest of your view settings. The button carries no word — hover it, or ask a
+screen reader, and it tells you the setting and what clicking will do next.
 
 Light mode is not the dark theme inverted. The room stays a neutral grey — a
 grading suite with the lights on is still a calibrated room, and a white surround
