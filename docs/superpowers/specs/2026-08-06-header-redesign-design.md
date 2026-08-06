@@ -132,20 +132,32 @@ first, so what remains is always the more important thing.
 | --- | --- | --- | --- |
 | 1 | the clock | gone (the OS has one) | 1100 |
 | 2 | the wordmark's text | gone; the mark glyph stays | 1100 |
-| 3 | the count words | clipped to screen readers; glyph + number remain | 860 |
-| 4 | `.bar-filters` — agent, project, group by | the sheet | 860 |
-| 5 | `.bar-controls` — view chip, mode toggle | the sheet | 640 |
-| 6 | `.bar-actions` — History, Alerts, Theme | the sheet | 640 |
+| 3 | the picker and action regions | the sheet; the trigger appears | 820 |
+| 4 | the count words | clipped to screen readers; glyph + number remain | 640 |
+| 5 | the healthy lamp's word | a `title`; the dot stays | 640 |
 
 Things shed by **region**, never by individual control, because a region is what CSS can reposition
 wholesale. That is what splits the pickers into two: `.bar-filters` holds the three that sit on
 their default nearly always, and `.bar-controls` holds the two you actually reach for — which view
-you are watching, and how it is drawn. They go in that order for the same reason.
+you are watching, and how it is drawn. They still shed together, but the split is what lets the bar
+put the filters last in the sheet and the view chip first, where a thumb reaches.
 
-The sheet trigger appears at the first tier where anything is in the sheet — around 860, not 640 —
-and the sheet holds one, two or three regions depending on how narrow things are.
+**One sheet breakpoint, not two.** An earlier draft of this table had the filters going at 860 and
+the view, mode and actions at 640 — two separate moves into the sheet. That cannot be built the way
+the rest of this design requires. A region shed at the wider breakpoint has to be pinned to the
+viewport while its neighbours stay in the bar, and once a second region joins it the two have to
+stack against each other with no known heights. Every arrangement that solves the stacking puts the
+regions inside a shared positioned parent — and `display: contents` cannot lift a child back out of
+a positioned ancestor, so the ones still meant to be in the bar can no longer get there.
 
-Below the last breakpoint the bar is exactly the glance that was asked for:
+Stacking them by hand would mean a magic offset for the sheet's own chrome height, which is the
+kind of number that is correct until someone changes a font size. One breakpoint, one wrapper, one
+fixed panel. The cost is the band around 700–820, where the bar is sparser than it strictly has to
+be; the alternative is a header held together by a measured constant.
+
+Below the last breakpoint the bar is exactly the glance that was asked for — and the sheet
+breakpoint is one number, defined once as a `--sheet-tier` custom property that the open/close
+script reads back, so CSS and JavaScript cannot disagree about where the sheet begins:
 
 ```
 390px
@@ -175,10 +187,12 @@ session in a directory with a very long name cannot set the width of the header.
 
 ### Why no layout JavaScript
 
-The controls **do not move in the DOM**. `.bar-filters`, `.bar-controls` and `.bar-actions` are
-single elements, and below their respective breakpoints CSS re-lays each of them out as part of a
-bottom sheet — `position: fixed`, pinned to the bottom, shown when `body[data-sheet='open']`. Above
-the widest of those breakpoints the sheet trigger is `display: none`.
+The controls **do not move in the DOM**. `.bar-filters`, `.bar-controls` and `.bar-actions` sit
+inside one wrapper, `.bar-shelf`, which is `display: contents` above the sheet breakpoint — it has
+no box of its own there, so the three regions lay out as direct flex children of the bar exactly as
+if it were not present. Below the breakpoint the wrapper becomes the sheet: `position: fixed`,
+pinned to the bottom, a flex column, shown when `body[data-sheet='open']`. Above the breakpoint the
+sheet trigger is `display: none`.
 
 The alternative — measuring the bar and moving the lowest-priority control into an overflow menu
 until it fits — genuinely handles awkward intermediate widths that fixed tiers do not. It was
@@ -254,8 +268,8 @@ Follows the `save-dialog` pattern already in `index.html`: a plain element plus 
   sliders button on close.
 - Inside, chips relax into full-width labelled rows with 44px touch targets. The labels come back
   here — the reason they were dropped was width, and in the sheet there is width.
-- The view-parse warning badge (`#view-warn`) rides with the view chip, into the sheet at the tier
-  where the view chip goes.
+- The view-parse warning badge (`#view-warn`) rides with the view chip into the sheet, since it sits
+  inside the same region.
 
 ## Architecture
 
