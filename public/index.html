@@ -27,14 +27,29 @@
     />
   </head>
   <body>
-    <header class="masthead" id="masthead" data-mode="wall">
-      <div class="zone">
-        <div class="wordmark">agent<span>·</span>cctv</div>
+    <!--
+      Six regions, hairline-separated: who this is, what the wall says, which
+      sessions and how they are drawn, what you can narrow that to, what you can
+      do to it, and the state of the machine itself.
+
+      Left to right is the order the README already uses to explain the thing —
+      the view is the population, and the filters narrow within it. It is also
+      the order they stack in when the middle three drop into the sheet, which
+      is why they are grouped rather than merely adjacent.
+    -->
+    <header class="bar" id="masthead" data-mode="wall">
+      <div class="bar-id">
+        <svg class="i mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 8.5h17v9.5h-17z" />
+          <circle cx="12" cy="13.25" r="2.75" />
+          <path d="M8.5 8.5 10 5.5h4l1.5 3" />
+        </svg>
+        <span class="wordmark">agent<span>·</span>cctv</span>
       </div>
 
       <!-- Counts and state filter are the same three concepts, so they are one
            control: it reports the number and it is how you narrow to it. -->
-      <div class="zone">
+      <div class="bar-states">
         <div class="readouts" role="group" aria-label="Filter by state">
           <button class="readout" data-filter="all" data-kind="all" type="button" aria-pressed="true">
             <b id="stat-all">0</b><span>all</span>
@@ -58,53 +73,67 @@
         </div>
       </div>
 
-      <div class="masthead-spacer"></div>
+      <!--
+        Everything that leaves the bar on a narrow screen, in one wrapper.
 
-      <div class="zone wall-only">
-        <label class="pick" id="pick-view-label" hidden>
-          <span>view</span>
-          <select id="pick-view"></select>
-        </label>
-        <span class="view-warn" id="view-warn" role="status" hidden></span>
-        <label class="pick">
-          <span>agent</span>
-          <select id="pick-source"><option value="all">all</option></select>
-        </label>
-        <label class="pick">
-          <span>project</span>
-          <select id="pick-project"><option value="all">all</option></select>
-        </label>
-        <label class="pick">
-          <span>mode</span>
-          <select id="pick-mode">
-            <option value="wall">wall</option>
-            <option value="focus">focus</option>
-            <option value="tail">tail</option>
-          </select>
-        </label>
-        <label class="pick" id="pick-group-label">
-          <span>group by</span>
-          <select id="pick-group">
-            <option value="none">nothing</option>
-            <option value="project">project</option>
-            <option value="agent">agent</option>
-            <option value="state">state</option>
-            <option value="branch">branch</option>
-          </select>
-        </label>
+        The wrapper is `display: contents` at wide widths, so it has no box and
+        the three regions lay out as direct children of .bar exactly as if it
+        were not here. Below the sheet breakpoint it becomes the sheet itself.
+        It exists so the tiers have one thing to reposition instead of three
+        things to keep from colliding.
+      -->
+      <div class="bar-shelf" id="bar-shelf">
+        <!-- Which sessions are on the wall, and how they are drawn. -->
+        <div class="bar-controls wall-only">
+          <label class="pick" id="pick-view-label">
+            <span>view</span>
+            <select id="pick-view"></select>
+          </label>
+          <span class="view-warn" id="view-warn" role="status" hidden></span>
+          <label class="pick">
+            <span>mode</span>
+            <select id="pick-mode">
+              <option value="wall">wall</option>
+              <option value="focus">focus</option>
+              <option value="tail">tail</option>
+            </select>
+          </label>
+        </div>
+
+        <!-- Narrowing within that. -->
+        <div class="bar-filters wall-only">
+          <label class="pick">
+            <span>agent</span>
+            <select id="pick-source"><option value="all">all</option></select>
+          </label>
+          <label class="pick">
+            <span>project</span>
+            <select id="pick-project"><option value="all">all</option></select>
+          </label>
+          <label class="pick" id="pick-group-label">
+            <span>group by</span>
+            <select id="pick-group">
+              <option value="none">nothing</option>
+              <option value="project">project</option>
+              <option value="agent">agent</option>
+              <option value="state">state</option>
+              <option value="branch">branch</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="bar-actions">
+          <button class="chip" id="archive-toggle" type="button" aria-pressed="false">History</button>
+          <button class="bell" id="bell" type="button" data-state="off" aria-pressed="false">
+            <span id="bell-label">Alerts</span>
+          </button>
+          <button class="theme" id="theme" type="button">
+            <span id="theme-icon"></span><span id="theme-label">Auto</span>
+          </button>
+        </div>
       </div>
 
-      <div class="zone">
-        <button class="chip" id="archive-toggle" type="button" aria-pressed="false">History</button>
-        <button class="bell" id="bell" type="button" data-state="off" aria-pressed="false">
-          <span id="bell-label">Alerts</span>
-        </button>
-        <button class="theme" id="theme" type="button">
-          <span id="theme-icon"></span><span id="theme-label">Auto</span>
-        </button>
-      </div>
-
-      <div class="zone">
+      <div class="bar-status">
         <div class="clock" id="clock">--:--:--</div>
         <div class="link-state" id="link" data-up="false">connecting</div>
       </div>

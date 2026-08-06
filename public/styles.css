@@ -187,19 +187,19 @@ body[data-locked='true'] {
   border: 0;
 }
 
-/* ── masthead ─────────────────────────────────────────────────────────────
+/* ── the bar ──────────────────────────────────────────────────────────────
 
-   Four zones, hairline-separated: who this is, what the wall says, what you can
-   narrow it to, and the state of the machine itself. Previously eight controls in
-   one undifferentiated row of 10px uppercase grey.                          */
+   Six regions, hairline-separated. The middle three are wrapped in a shelf that
+   has no box of its own at wide widths and becomes the bottom sheet at narrow
+   ones — which is the whole responsive mechanism. Nothing here moves in the
+   DOM; a region is repositioned, never re-parented.                         */
 
-.masthead {
+.bar {
   display: flex;
-  /* Wrap on fit, not on a guessed breakpoint. The labels inside deliberately
-     never wrap (see .readout span), so the row has a hard minimum width — tying
-     the wrap to a fixed media query left a band of window sizes where the header
-     was too wide to fit and too wide to wrap, and the whole page scrolled
-     sideways. A second header row is a far better failure than that. */
+  /* Still wrapping. The regions can shed independently but the sheet that
+     catches them does not exist yet; nowrap without it would put the header
+     into horizontal overflow at narrow widths, which is worse than a second
+     row. Switched to nowrap in the same change that adds the sheet. */
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s4);
@@ -213,14 +213,63 @@ body[data-locked='true'] {
   z-index: 20;
 }
 
-.zone {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s3);
+/*
+  No box of its own. The three regions inside lay out as direct flex children of
+  .bar exactly as if this element were not here, which is what lets one wrapper
+  own the narrow-width behaviour without owning the wide-width layout.
+*/
+.bar-shelf {
+  display: contents;
 }
 
-.zone + .zone::before {
+.bar-id,
+.bar-states,
+.bar-filters,
+.bar-controls,
+.bar-actions,
+.bar-status {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  /* A flex item defaults to min-width: auto and refuses to shrink below its
+     content. That is half the reason the old header could not fit: every
+     region held the row open at its natural width. */
+  min-width: 0;
+  /* The last line of defence, and it should never fire once the tiers below
+     are doing their job. A region narrower than its own contents has to go
+     somewhere, and a second line is a far better failure than a page that
+     scrolls sideways — which is what happens without this, at 390, today. */
+  flex-wrap: wrap;
+}
+
+/* The two picker regions are the ones that grow when you filter, so they are
+   the ones allowed to give the space back. */
+.bar-filters,
+.bar-controls {
+  flex-shrink: 1;
+}
+
+.bar-states,
+.bar-status {
+  flex-shrink: 0;
+}
+
+/* Push the machine's own state to the far end. */
+.bar-status {
+  margin-left: auto;
+}
+
+/*
+  Hairlines between regions, listed rather than written as `.bar > * + *`.
+  The shelf is `display: contents`, so it generates no box for a sibling
+  combinator to land on, and whether it generates pseudo-elements at all is
+  something browsers have disagreed about. Naming the five is duller and works.
+*/
+.bar-states::before,
+.bar-controls::before,
+.bar-filters::before,
+.bar-actions::before,
+.bar-status::before {
   content: '';
   align-self: stretch;
   width: 1px;
@@ -228,9 +277,22 @@ body[data-locked='true'] {
   margin-right: var(--s1);
 }
 
-.masthead-spacer {
-  flex: 1;
-  min-width: var(--s2);
+.i {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mark {
+  width: 17px;
+  height: 17px;
+  color: var(--ink-2);
 }
 
 .wordmark {
@@ -252,7 +314,6 @@ body[data-locked='true'] {
    only one allowed to shout, and only when it has something to shout about. */
 .readouts {
   display: flex;
-  flex-wrap: wrap;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--edge);
@@ -329,6 +390,10 @@ body[data-locked='true'] {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-3);
+  /* Deliberately no `min-width: 0`. This is a flex row whose children cannot
+     wrap, so letting it shrink below its contents pushes the select off the
+     right edge of the page — 44px of sideways scroll at 390. It keeps its
+     natural width and the region around it wraps instead. */
 }
 
 /* Same reason as .readout span: "group by" wrapping drops its label off the
@@ -486,6 +551,7 @@ body[data-locked='true'] {
   font-size: var(--t-meta);
   letter-spacing: 0.06em;
   color: var(--ink-3);
+  white-space: nowrap;
 }
 
 .link-state::before {
@@ -494,6 +560,7 @@ body[data-locked='true'] {
   height: 6px;
   border-radius: 50%;
   background: var(--ink-3);
+  flex: none;
 }
 
 .link-state[data-up='true'] {
@@ -530,9 +597,25 @@ body[data-stale='true'] .archive {
 
 /* Wall-only controls, while the archive is open. Saying so beats leaving live
    controls sitting there doing nothing. */
-.masthead[data-mode='archive'] .wall-only {
+.bar[data-mode='archive'] .wall-only {
   opacity: 0.4;
   pointer-events: none;
+}
+
+/* ── tier 1: the clock and the wordmark's text ─────────────────────────────
+
+   First to go, because neither is telling you anything you cannot get
+   elsewhere: the OS has a clock, and you know which page you are on.
+   Breakpoint values throughout this file are fitted against real renders in
+   the last commit of this change, not derived.                             */
+
+@media (max-width: 1100px) {
+  .clock {
+    display: none;
+  }
+  .wordmark {
+    display: none;
+  }
 }
 
 /* ── the wall ─────────────────────────────────────────────────────────────
@@ -1441,14 +1524,6 @@ body[data-stale='true'] .archive {
 
 /* ── responsive & motion ──────────────────────────────────────────────── */
 
-@media (max-width: 1100px) {
-  /* .masthead wraps at every width now, so only the spacer is breakpoint-bound:
-     once the header has wrapped there is nothing left to push apart. */
-  .masthead-spacer {
-    display: none;
-  }
-}
-
 @media (max-width: 700px) {
   .wall,
   .group-grid {
@@ -1456,16 +1531,6 @@ body[data-stale='true'] .archive {
   }
   .wall {
     padding: var(--s3);
-  }
-  .masthead {
-    gap: var(--s3);
-    padding: var(--s2) var(--s3);
-  }
-  .zone + .zone::before {
-    display: none;
-  }
-  .clock {
-    display: none;
   }
 }
 
