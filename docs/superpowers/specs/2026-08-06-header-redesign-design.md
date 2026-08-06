@@ -128,13 +128,25 @@ is a deliberate trade of resting legibility for a header that fits.
 One row, `flex-wrap: nowrap`, and a fixed order of what goes as the window narrows. Highest sheds
 first, so what remains is always the more important thing.
 
-| # | What sheds | Where it goes | Around |
+| # | What sheds | Where it goes | At |
 | --- | --- | --- | --- |
-| 1 | the clock | gone (the OS has one) | 1100 |
-| 2 | the wordmark's text | gone; the mark glyph stays | 1100 |
-| 3 | the picker and action regions | the sheet; the trigger appears | 820 |
-| 4 | the count words | clipped to screen readers; glyph + number remain | 640 |
-| 5 | the healthy lamp's word | a `title`; the dot stays | 640 |
+| 1 | the clock | gone (the OS has one) | 1360 |
+| 2 | the wordmark's text | gone; the mark glyph stays | 1360 |
+| 3 | the count words | clipped to screen readers; glyph + number remain | 1200 |
+| 4 | the healthy lamp's word | a `title`; the dot stays | 1200 |
+| 5 | the picker and action regions | the sheet; the trigger appears | 980 |
+
+These are fitted numbers, measured rather than derived — see *Fitting*, below. Two things about
+them differ from the first draft of this table, and both are improvements the measuring found.
+
+The widths are larger than estimated: the bar needs 1270px with nothing filtered, so the clock and
+wordmark have to go at 1360 rather than 1100.
+
+More interestingly, **the words now shed before the controls do.** The draft sent the pickers to the
+sheet at 820 and only clipped the count words at 640. Fitted, it is the other way round: the count
+words go at 1200 and the sheet does not appear until 980. That ordering is better on its own terms —
+clipping a word costs a label that colour and a glyph are already carrying, while the sheet costs a
+tap — and it is only visible once the real widths are on the table.
 
 Things shed by **region**, never by individual control, because a region is what CSS can reposition
 wholesale. That is what splits the pickers into two: `.bar-filters` holds the three that sit on
@@ -152,8 +164,12 @@ a positioned ancestor, so the ones still meant to be in the bar can no longer ge
 
 Stacking them by hand would mean a magic offset for the sheet's own chrome height, which is the
 kind of number that is correct until someone changes a font size. One breakpoint, one wrapper, one
-fixed panel. The cost is the band around 700–820, where the bar is sparser than it strictly has to
-be; the alternative is a header held together by a measured constant.
+fixed panel.
+
+The cost, at the fitted widths, is the band from 640 to 980: the bar there holds four counts, a lamp
+and a button in a window with room for more, because the moment anything leaves the bar everything
+does. A tablet in portrait lands in it; the same tablet in landscape does not. The alternative is a
+header held together by a measured constant.
 
 Below the last breakpoint the bar is exactly the glance that was asked for — and the sheet
 breakpoint is one number, defined once as a `--sheet-tier` custom property that the open/close
