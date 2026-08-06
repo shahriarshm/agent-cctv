@@ -168,3 +168,97 @@ test('a loopback bind with a public URL and a strong token is accepted', () => {
 // --no-token — must not regress. Already covered above by
 // '--no-token on loopback is still allowed'; that test still passes
 // unmodified rather than being duplicated here.
+
+/*
+  A tunnel is the same "reachable beyond this machine" fact as a public URL,
+  arriving by a different route — so it goes through the same refusals. The
+  difference is that the hostname it will add to the allowlist does not exist
+  yet, which is why none of these can be checked against one.
+*/
+
+/** resolve() for a tunnel run, on a terminal unless told otherwise. */
+function tunnelCfg(flags, over = {}) {
+  return resolve({ flags, env: {}, file: {}, makeToken: stub, tty: true, ...over });
+}
+
+test('a tunnel run carries the token that makes it legal', () => {
+  const cfg = validate(tunnelCfg({ tunnel: 'cloudflare' }));
+  assert.equal(cfg.tunnel, 'cloudflare');
+  assert.equal(cfg.token, 'r'.repeat(32));
+  assert.equal(cfg.tunnelTtlMs, null);
+});
+
+test('--tunnel with --no-token is refused before anything binds', () => {
+  assert.throws(
+    () => validate(tunnelCfg({ tunnel: 'cloudflare', 'no-token': true })),
+    (err) => {
+      assert.ok(err instanceof ConfigError);
+      assert.match(err.message, /--no-token/);
+      assert.match(err.message, /source code/, 'the message must say what is being published');
+      return true;
+    }
+  );
+});
+
+test('an unknown provider is refused rather than defaulted', () => {
+  assert.throws(() => validate(tunnelCfg({ tunnel: 'wireguard' })), /wireguard/);
+  assert.throws(() => validate(tunnelCfg({ tunnel: 'wireguard' })), /cloudflare, ngrok/);
+});
+
+test('a provider name is matched case-insensitively', () => {
+  assert.equal(validate(tunnelCfg({ tunnel: 'Cloudflare' })).tunnel, 'cloudflare');
+});
+
+test('--tunnel and --tunnel-cmd together are refused rather than ranked', () => {
+  assert.throws(
+    () => validate(tunnelCfg({ tunnel: 'ngrok', 'tunnel-cmd': 'bore local 4599' })),
+    /--tunnel-cmd/
+  );
+});
+
+test('--tunnel-args without a provider is refused, not silently dropped', () => {
+  assert.throws(() => validate(tunnelCfg({ 'tunnel-args': '--region us' })), /--tunnel-args/);
+  // With --tunnel-cmd too: that string already carries its own arguments, and
+  // two places to put them is one too many.
+  assert.throws(
+    () => validate(tunnelCfg({ 'tunnel-cmd': 'bore local 4599', 'tunnel-args': '--x' })),
+    /--tunnel-args/
+  );
+});
+
+test('an ambiguous --tunnel-ttl is refused', () => {
+  assert.throws(() => validate(tunnelCfg({ tunnel: 'ngrok', 'tunnel-ttl': '30' })), /45s, 30m or 2h/);
+  assert.equal(validate(tunnelCfg({ tunnel: 'ngrok', 'tunnel-ttl': '30m' })).tunnelTtlMs, 1_800_000);
+});
+
+test('--tunnel-ttl without anything to close is refused', () => {
+  assert.throws(() => validate(tunnelCfg({ 'tunnel-ttl': '30m' })), /--tunnel-ttl/);
+});
+
+test('publishing from a non-terminal requires --yes to have been written down', () => {
+  // A unit file, a CI job or a background & must never start publishing
+  // because there was nobody there to be asked.
+  assert.throws(() => validate(tunnelCfg({ tunnel: 'cloudflare' }, { tty: false })), /--yes/);
+  assert.doesNotThrow(() => validate(tunnelCfg({ tunnel: 'cloudflare', yes: true }, { tty: false })));
+});
+
+test('AGENT_CCTV_TUNNEL configures a tunnel the same way the flag does', () => {
+  const cfg = validate(
+    resolve({
+      flags: {},
+      env: { AGENT_CCTV_TUNNEL: 'ngrok', AGENT_CCTV_TUNNEL_ARGS: '--region eu' },
+      makeToken: stub,
+      tty: true,
+    })
+  );
+  assert.equal(cfg.tunnel, 'ngrok');
+  assert.equal(cfg.tunnelArgs, '--region eu');
+});
+
+test('no tunnel means no tunnel fields set, and nothing else changes', () => {
+  const cfg = validate(bare());
+  assert.equal(cfg.tunnel, null);
+  assert.equal(cfg.tunnelCmd, null);
+  assert.equal(cfg.assumeYes, false);
+  assert.deepEqual(cfg.allowedHosts, ['localhost', '127.0.0.1', '::1']);
+});
