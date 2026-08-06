@@ -187,20 +187,24 @@ body[data-locked='true'] {
   border: 0;
 }
 
-/* ── masthead ─────────────────────────────────────────────────────────────
+/* ── the bar ──────────────────────────────────────────────────────────────
 
-   Four zones, hairline-separated: who this is, what the wall says, what you can
-   narrow it to, and the state of the machine itself. Previously eight controls in
-   one undifferentiated row of 10px uppercase grey.                          */
+   Six regions, hairline-separated. The middle three are wrapped in a shelf that
+   has no box of its own at wide widths and becomes the bottom sheet at narrow
+   ones — which is the whole responsive mechanism. Nothing here moves in the
+   DOM; a region is repositioned, never re-parented.                         */
 
-.masthead {
+.bar {
   display: flex;
-  /* Wrap on fit, not on a guessed breakpoint. The labels inside deliberately
-     never wrap (see .readout span), so the row has a hard minimum width — tying
-     the wrap to a fixed media query left a band of window sizes where the header
-     was too wide to fit and too wide to wrap, and the whole page scrolled
-     sideways. A second header row is a far better failure than that. */
-  flex-wrap: wrap;
+  /*
+    One row, at every width. The previous header wrapped because it had a hard
+    minimum it could not get under — labels that refused to break, on controls
+    that were always all present. Every tier below is a real reduction in that
+    minimum, and the last one takes it down to four numbers, a lamp and a
+    button. There is no longer a width at which the bar is both too wide to fit
+    and unable to shed, which is the band that used to scroll sideways.
+  */
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--s4);
   /* after the `gap` shorthand, which would otherwise reset it */
@@ -213,14 +217,69 @@ body[data-locked='true'] {
   z-index: 20;
 }
 
-.zone {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s3);
+/*
+  No box of its own. The three regions inside lay out as direct flex children of
+  .bar exactly as if this element were not here, which is what lets one wrapper
+  own the narrow-width behaviour without owning the wide-width layout.
+*/
+.bar-shelf {
+  display: contents;
 }
 
-.zone + .zone::before {
+.bar-id,
+.bar-states,
+.bar-filters,
+.bar-controls,
+.bar-actions,
+.bar-status {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  /* A flex item defaults to min-width: auto and refuses to shrink below its
+     content. That is half the reason the old header could not fit: every
+     region held the row open at its natural width. */
+  min-width: 0;
+  /*
+    No wrapping, and this is load-bearing rather than tidy. A region allowed to
+    wrap takes a second line the instant its contents do not fit — which is
+    cheaper for the layout engine than shrinking them, so it wins, and the
+    chips' own ellipsis never gets a chance to fire. Set one filter and the
+    whole bar went to two rows at every width up to 1480.
+
+    Without wrap the pressure goes where it was designed to go: .chip-value
+    ellipsises at its max-width and the bar stays one row.
+  */
+  flex-wrap: nowrap;
+}
+
+/* The two picker regions are the ones that grow when you filter, so they are
+   the ones allowed to give the space back. */
+.bar-filters,
+.bar-controls {
+  flex-shrink: 1;
+}
+
+.bar-states,
+.bar-status {
+  flex-shrink: 0;
+}
+
+/* Push the machine's own state to the far end. */
+.bar-status {
+  margin-left: auto;
+}
+
+/*
+  Hairlines between regions, listed rather than written as `.bar > * + *`.
+  The shelf is `display: contents`, so it generates no box for a sibling
+  combinator to land on, and whether it generates pseudo-elements at all is
+  something browsers have disagreed about. Naming the five is duller and works.
+*/
+.bar-states::before,
+.bar-controls::before,
+.bar-filters::before,
+.bar-actions::before,
+.bar-status::before {
   content: '';
   align-self: stretch;
   width: 1px;
@@ -228,9 +287,22 @@ body[data-locked='true'] {
   margin-right: var(--s1);
 }
 
-.masthead-spacer {
-  flex: 1;
-  min-width: var(--s2);
+.i {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mark {
+  width: 17px;
+  height: 17px;
+  color: var(--ink-2);
 }
 
 .wordmark {
@@ -252,7 +324,6 @@ body[data-locked='true'] {
    only one allowed to shout, and only when it has something to shout about. */
 .readouts {
   display: flex;
-  flex-wrap: wrap;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--edge);
@@ -272,6 +343,29 @@ body[data-locked='true'] {
   padding: 3px 10px;
   border-radius: 2px;
   color: var(--ink-3);
+}
+
+/* Colour is already carrying "working" and "needs you", but colour alone is
+   not a distinction a colourblind or greyscale reader gets. Once the words
+   clip at the narrowest tier, the glyph is the only thing left telling these
+   four counts apart, so it is not decoration. */
+.readout .i {
+  width: 13px;
+  height: 13px;
+  align-self: center;
+  opacity: 0.75;
+}
+
+.readout[aria-pressed='true'] .i {
+  opacity: 1;
+}
+
+.readout[data-kind='busy'] .i {
+  color: var(--rolling-ink);
+}
+
+.readout[data-kind='attention'][data-hot='true'] .i {
+  color: var(--tally-ink);
 }
 
 .readout b {
@@ -329,6 +423,10 @@ body[data-locked='true'] {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-3);
+  /* Deliberately no `min-width: 0`. This is a flex row whose children cannot
+     wrap, so letting it shrink below its contents pushes the select off the
+     right edge of the page — 44px of sideways scroll at 390. It keeps its
+     natural width and the region around it wraps instead. */
 }
 
 /* Same reason as .readout span: "group by" wrapping drops its label off the
@@ -366,6 +464,156 @@ body[data-locked='true'] {
   color: var(--ink);
 }
 
+/*
+  A picker that costs width only when it is doing something.
+
+  "Agent: all" and "project: all" together were about 370px of header saying
+  nothing at all, and that was most of why the row could not fit. A chip on its
+  default value is an icon; set it, and it shows the value and lights up. The
+  width the bar spends on filtering is now proportional to how much filtering
+  is actually on.
+
+  The <select> is the real control, laid over the chip at zero opacity, so the
+  native picker, the keyboard, the screen reader and the iOS wheel all keep
+  working. There is no listbox here to reimplement.
+*/
+.chip-pick {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink-3);
+  font-size: var(--t-meta);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.chip-pick:hover {
+  color: var(--ink-2);
+  border-color: var(--edge);
+}
+
+/* :focus-within and not :focus, because the thing that actually takes focus is
+   the invisible select on top. Without this the chip is a keyboard black hole:
+   focusable, and with no way to see that it is focused. */
+.chip-pick:focus-within {
+  border-color: var(--ink-3);
+  color: var(--ink);
+  outline: 2px solid var(--steel);
+  outline-offset: 1px;
+}
+
+.chip-pick[data-set='true'] {
+  background: var(--panel-2);
+  border-color: var(--edge);
+  color: var(--ink);
+}
+
+.chip-icon {
+  display: flex;
+  flex: none;
+}
+
+.chip-mark {
+  display: none;
+  width: 13px;
+  height: 13px;
+}
+
+.chip-mark svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+}
+
+/* An agent chip holding a real agent shows that agent's own mark instead of the
+   generic one — the same marks the tiles use, so the chip and the tiles it
+   filters to are visibly the same thing. */
+.chip-pick[data-set='true'] .chip-mark:not(:empty) {
+  display: block;
+}
+
+.chip-pick[data-set='true'] .chip-default:has(+ .chip-mark:not(:empty)) {
+  display: none;
+}
+
+.chip-value {
+  min-width: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A chip on its default has nothing worth the pixels. Hidden rather than
+   emptied so the element keeps its place and the chip does not resize by a
+   pixel on every repaint. */
+.chip-pick[data-set='false'] .chip-value {
+  display: none;
+}
+
+/*
+  Three options, all of them a picture of a layout. A select would spend a word
+  and a caret saying what the picture says, and would be wider.
+
+  It borrows .readout's lit-and-underlined treatment on purpose: the mode
+  toggle and the state filter are the same kind of control — pick one of a
+  small set — and reading as one family beats inventing a second look.
+*/
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  flex: none;
+}
+
+.seg-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 2px;
+  color: var(--ink-3);
+}
+
+.seg-btn:hover {
+  color: var(--ink);
+}
+
+.seg-btn[aria-pressed='true'] {
+  background: var(--panel-hi);
+  box-shadow: inset 0 -2px 0 var(--ink);
+  color: var(--ink);
+}
+
+.chip-pick select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  cursor: pointer;
+  /* iOS zooms the whole page when a form control under 16px takes focus. The
+     select is invisible, but the zoom is not. */
+  font-size: 16px;
+}
+
 /* A view file that would not parse. Ember, not red: red on this wall means a
    session is blocked on you, and a config typo is the machine's problem. */
 .view-warn {
@@ -380,7 +628,74 @@ body[data-locked='true'] {
   white-space: nowrap;
 }
 
-.bell,
+/*
+  The three things you can do to the wall, as opposed to the things you can
+  narrow it to. Square icon buttons: at this size a word next to each cost more
+  than three times what the glyph does and said the same thing.
+*/
+.act {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink-2);
+  font: inherit;
+  padding: 6px;
+  cursor: pointer;
+  flex: none;
+}
+
+.act:hover:not([aria-disabled='true']) {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.act[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--panel);
+}
+
+/*
+  Armed alerts. The bell fills rather than lighting a separate dot beside it —
+  the dot existed because the button had a word next to it and something had to
+  carry the state; the glyph can carry its own.
+*/
+.bell[data-state='on'] {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.bell[data-state='on'] .bell-glyph {
+  fill: currentColor;
+  filter: drop-shadow(var(--glow) rgba(160, 200, 255, 0.6));
+}
+
+.bell[aria-disabled='true'] {
+  cursor: not-allowed;
+  color: var(--ink-3);
+  border-style: dashed;
+}
+
+/* Cycles auto → light → dark. The glyph is the *setting* — a half-lit circle for
+   auto, a sun, a moon — not the resolved look, so "auto" stays distinguishable
+   from an explicit light or dark that happens to match it right now. The title
+   is where the resolved look is spelled out. */
+.theme svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Still used by the save dialog and the archive's own controls. */
 .chip {
   appearance: none;
   display: flex;
@@ -398,8 +713,7 @@ body[data-locked='true'] {
   white-space: nowrap;
 }
 
-.chip:hover,
-.bell:hover:not([aria-disabled='true']) {
+.chip:hover {
   color: var(--ink);
   border-color: var(--ink-3);
 }
@@ -408,69 +722,6 @@ body[data-locked='true'] {
   background: var(--ink);
   border-color: var(--ink);
   color: var(--panel);
-}
-
-/* Armed-alerts indicator. Neither amber nor tally: those already mean "rolling"
-   and "needs a human", and this is about the wall, not about a session. */
-.bell::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--ink-3);
-  flex: none;
-}
-
-.bell[data-state='on'] {
-  color: var(--ink);
-  border-color: var(--ink-3);
-}
-
-.bell[data-state='on']::before {
-  background: var(--ink);
-  box-shadow: var(--glow) rgba(160, 200, 255, 0.6);
-}
-
-.bell[aria-disabled='true'] {
-  cursor: not-allowed;
-  color: var(--ink-3);
-  border-style: dashed;
-}
-
-/* Cycles auto → light → dark. The glyph is the current *resolved* look, so the
-   button always shows what you are getting, not what you asked for. */
-.theme {
-  appearance: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
-  background: var(--panel-2);
-  color: var(--ink-2);
-  font: inherit;
-  font-size: var(--t-meta);
-  letter-spacing: 0.04em;
-  padding: 5px 9px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.theme:hover {
-  color: var(--ink);
-  border-color: var(--ink-3);
-}
-
-.theme svg {
-  width: 13px;
-  height: 13px;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .clock {
@@ -486,6 +737,7 @@ body[data-locked='true'] {
   font-size: var(--t-meta);
   letter-spacing: 0.06em;
   color: var(--ink-3);
+  white-space: nowrap;
 }
 
 .link-state::before {
@@ -494,6 +746,7 @@ body[data-locked='true'] {
   height: 6px;
   border-radius: 50%;
   background: var(--ink-3);
+  flex: none;
 }
 
 .link-state[data-up='true'] {
@@ -530,9 +783,229 @@ body[data-stale='true'] .archive {
 
 /* Wall-only controls, while the archive is open. Saying so beats leaving live
    controls sitting there doing nothing. */
-.masthead[data-mode='archive'] .wall-only {
+.bar[data-mode='archive'] .wall-only {
   opacity: 0.4;
   pointer-events: none;
+}
+
+/*
+  A label that has run out of room. Clipped rather than `display: none`,
+  because the accessible name of the "working" button has to stay "3 working"
+  and not "3" — a screen-reader user reading a bare number off a monitoring
+  dashboard has been told nothing at all.
+
+  Same technique as .sr-only; a separate class because this one is applied
+  conditionally by a media query rather than always.
+*/
+.clips {
+  overflow: hidden;
+}
+
+/* ── tier 3: the sheet ─────────────────────────────────────────────────────
+
+   Last to fire, at the narrowest of the three widths, and written first here
+   because the rest of this section is what it does rather than when.
+
+   .bar-shelf becomes the sheet. Above the breakpoint it is `display: contents`
+   and the three regions inside it are ordinary flex children of the bar; below
+   it, the shelf grows a box, pins itself to the bottom of the viewport and
+   stacks them.
+
+   That is the whole mechanism, and it is why nothing moves in the DOM: there is
+   no second container to move things into. Widening the window past the
+   breakpoint puts every region back with nothing to undo.                   */
+
+:root {
+  /*
+    Where the sheet begins. Declared here because app.js reads it back — a media
+    query cannot use a custom property, so the literal in the @media below has
+    to match this value, but nothing outside this file has to know the number.
+  */
+  --sheet-tier: 980px;
+}
+
+.sheet-open,
+.sheet-scrim,
+.sheet-chrome {
+  display: none;
+}
+
+@media (max-width: 980px) {
+  .sheet-open {
+    display: flex;
+  }
+
+  .sheet-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--scrim);
+    z-index: 28;
+  }
+
+  .bar-shelf {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    /* A phone in landscape has less height than the sheet wants. Scrolling the
+       sheet beats a Done button below the fold. */
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 0 var(--s4) calc(var(--s4) + env(safe-area-inset-bottom, 0px));
+    background: var(--panel);
+    border-top: 1px solid var(--edge);
+    box-shadow: var(--drawer-shadow);
+  }
+
+  /* Written after the rule above so it wins on order as well as specificity.
+     `hidden` on the shelf would not do: the shelf is the header's child and the
+     header is very much on screen. */
+  body:not([data-sheet='open']) .bar-shelf {
+    display: none;
+  }
+
+  .sheet-chrome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--s4) 0 var(--s3);
+    /* The sheet scrolls; the way out of it should not scroll away. */
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+  }
+
+  .sheet-chrome h2 {
+    margin: 0;
+    font-size: var(--t-title);
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  /* Regions stack instead of running across. */
+  .bar-controls,
+  .bar-filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  /* Hairlines separate regions in a row. In a column the row borders below are
+     already doing that job, and a vertical rule at the top of each region is
+     just a stray mark. */
+  .bar-controls::before,
+  .bar-filters::before,
+  .bar-actions::before {
+    display: none;
+  }
+
+  /* A chip in the sheet says which picker it is, and shows its value even at
+     the default. Both were dropped for width, and here there is width. */
+  .bar-shelf .chip-pick {
+    justify-content: flex-start;
+    min-height: 44px;
+    padding: var(--s3) var(--s2);
+    border-radius: 0;
+    border-width: 0 0 1px 0;
+    border-color: var(--edge-soft);
+    background: none;
+    font-size: var(--t-ui);
+  }
+
+  .bar-shelf .chip-pick::before {
+    content: attr(data-label);
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: var(--t-eyebrow);
+    width: 88px;
+    flex: none;
+  }
+
+  .bar-shelf .chip-pick[data-set='false'] .chip-value {
+    display: block;
+    color: var(--ink-3);
+  }
+
+  .bar-shelf .chip-value {
+    max-width: none;
+  }
+
+  .bar-shelf .seg {
+    align-self: flex-start;
+    margin: var(--s3) 0;
+  }
+
+  .bar-shelf .seg-btn {
+    padding: var(--s2) var(--s4);
+  }
+
+  /* Three actions across, thumb-sized. */
+  .bar-actions {
+    gap: var(--s2);
+    padding: var(--s3) 0 0;
+  }
+
+  .bar-actions .act {
+    flex: 1;
+    padding: var(--s3);
+  }
+}
+
+/* ── tier 1: the clock and the wordmark's text ─────────────────────────────
+
+   First to go, because neither is telling you anything you cannot get
+   elsewhere: the OS has a clock, and you know which page you are on. Together
+   they are 155px of the 1270 the bar needs with nothing filtered, which is
+   what puts this at 1360 rather than the 1100 it was first guessed at.
+
+   Every breakpoint in this file is measured, not derived: the bar was swept
+   from 360 to 1920 in 20px steps, at rest and with every filter set, and each
+   number is where it actually stopped fitting.                              */
+
+@media (max-width: 1360px) {
+  .clock {
+    display: none;
+  }
+  .wordmark {
+    display: none;
+  }
+}
+
+/* ── tier 2: words on things that are not only words ──────────────────────
+
+   The glyph and the number carry the counts from here down; the words stay in
+   the accessibility tree. The lamp gives up its word too — but only while it
+   is healthy.
+
+   This sheds before the sheet appears, which is the opposite of the order this
+   was designed in. Clipping a word costs a label that a glyph and a colour are
+   already carrying; sending a control to the sheet costs a tap. The cheaper
+   one should go first, and only the measured widths made that obvious.     */
+
+@media (max-width: 1200px) {
+  .readout .clips,
+  .link-state[data-up='true']:not([data-stale='true']) .clips {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .readout {
+    gap: 5px;
+    padding: 3px 7px;
+  }
 }
 
 /* ── the wall ─────────────────────────────────────────────────────────────
@@ -1441,14 +1914,6 @@ body[data-stale='true'] .archive {
 
 /* ── responsive & motion ──────────────────────────────────────────────── */
 
-@media (max-width: 1100px) {
-  /* .masthead wraps at every width now, so only the spacer is breakpoint-bound:
-     once the header has wrapped there is nothing left to push apart. */
-  .masthead-spacer {
-    display: none;
-  }
-}
-
 @media (max-width: 700px) {
   .wall,
   .group-grid {
@@ -1456,16 +1921,6 @@ body[data-stale='true'] .archive {
   }
   .wall {
     padding: var(--s3);
-  }
-  .masthead {
-    gap: var(--s3);
-    padding: var(--s2) var(--s3);
-  }
-  .zone + .zone::before {
-    display: none;
-  }
-  .clock {
-    display: none;
   }
 }
 

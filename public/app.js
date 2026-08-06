@@ -646,9 +646,8 @@ function closeInspector() {
 }
 
 /** Tab must not escape into the wall behind the scrim. */
-function trapFocus(e) {
-  if (e.key !== 'Tab' || inspector.dataset.open !== 'true') return;
-  const stops = inspector.querySelectorAll('button, [href], select, textarea, input, [tabindex]:not([tabindex="-1"])');
+function trapWithin(container, e) {
+  const stops = container.querySelectorAll('button, [href], select, textarea, input, [tabindex]:not([tabindex="-1"])');
   if (!stops.length) return;
   const first = stops[0];
   const last = stops[stops.length - 1];
@@ -659,6 +658,17 @@ function trapFocus(e) {
     e.preventDefault();
     first.focus();
   }
+}
+
+/*
+  Two modals, never both open — the sheet only exists at widths where the
+  inspector covers the whole screen anyway. The inspector is checked first
+  because it is the one on top when they do overlap.
+*/
+function trapFocus(e) {
+  if (e.key !== 'Tab') return;
+  if (inspector.dataset.open === 'true') trapWithin(inspector, e);
+  else if (document.body.dataset.sheet === 'open') trapWithin(shelf, e);
 }
 
 function renderInspectorMeta(s) {
@@ -726,7 +736,13 @@ function renderTasks(tasks) {
 closeBtn.addEventListener('click', closeInspector);
 scrim.addEventListener('click', closeInspector);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeInspector();
+  if (e.key === 'Escape') {
+    // The sheet is above the inspector when both could be open, and
+    // closeInspector() is a no-op when the drawer is shut, so ordering these
+    // the other way round would close the wrong one.
+    if (document.body.dataset.sheet === 'open') setSheet(false);
+    else closeInspector();
+  }
   trapFocus(e);
 });
 
@@ -857,6 +873,8 @@ archiveDays.addEventListener('change', loadArchive);
 
 const sourceSel = document.getElementById('pick-source');
 const projectSel = document.getElementById('pick-project');
+const groupSel = document.getElementById('pick-group');
+const viewSel = document.getElementById('pick-view');
 
 function applyFilters() {
   saveFilters();
@@ -882,6 +900,10 @@ function refreshFilterOptions() {
         const label = v === 'all' ? `all (${values.length})` : `${labelFor(v)} (${counts.get(v)})`;
         const opt = el('option', null, label);
         opt.value = v;
+        // The chip shows the name without the tally: the count belongs in the
+        // open list, where you are choosing, not on the closed chip, where you
+        // are reading what is set.
+        opt.dataset.chip = v === 'all' ? 'all' : labelFor(v);
         select.append(opt);
       }
     } else {
@@ -896,15 +918,60 @@ function refreshFilterOptions() {
 
   build(sourceSel, 'source', all.map((s) => s.source).filter(Boolean), (v) => sourceMeta(v).label);
   build(projectSel, 'project', all.map((s) => s.project).filter(Boolean), (v) => v);
+  paintChips();
+}
+
+/*
+  A chip earns its width by being set. Anything that changes a select's value or
+  rebuilds its options has to come back through here, or the chip goes on
+  showing the last thing it was told.
+*/
+const CHIP_DEFAULT = { 'pick-source': 'all', 'pick-project': 'all', 'pick-group': 'none' };
+
+function paintChip(select) {
+  const chip = select.closest('.chip-pick');
+  if (!chip) return;
+  const opt = select.selectedOptions[0];
+  const value = opt ? opt.dataset.chip || opt.textContent : '';
+  chip.querySelector('.chip-value').textContent = value;
+  const dflt = CHIP_DEFAULT[select.id];
+  chip.dataset.set = String(chip.dataset.always === 'true' || (dflt !== undefined && select.value !== dflt));
+  chip.title = `${chip.dataset.label}: ${value}`;
+}
+
+/*
+  The agent marks are the tiles' own, so a chip filtered to Claude Code and the
+  tiles it leaves on the wall carry the same glyph.
+
+  Written as two statements rather than one because test/spa-guard.test.js
+  matches its allowlist against the literal right-hand side, and `meta.icon` is
+  what is on it. Reusing an approved form beats growing that list — a short
+  list is the whole point of it.
+*/
+function paintAgentMark() {
+  const holder = document.getElementById('chip-mark-source');
+  if (sourceSel.value === 'all') {
+    holder.replaceChildren();
+    return;
+  }
+  const meta = sourceMeta(sourceSel.value);
+  holder.innerHTML = meta.icon;
+}
+
+function paintChips() {
+  for (const sel of [sourceSel, projectSel, groupSel, viewSel]) paintChip(sel);
+  paintAgentMark();
 }
 
 sourceSel.addEventListener('change', () => {
   filters.source = sourceSel.value;
+  paintChips();
   applyFilters();
 });
 
 projectSel.addEventListener('change', () => {
   filters.project = projectSel.value;
+  paintChips();
   applyFilters();
 });
 
@@ -913,7 +980,6 @@ projectSel.addEventListener('change', () => {
  * this is a click and not a preference toggle somewhere quiet.
  */
 const bell = document.getElementById('bell');
-const bellLabel = document.getElementById('bell-label');
 
 function paintBell() {
   const supported = typeof Notification !== 'undefined';
@@ -926,7 +992,10 @@ function paintBell() {
   // one thing that explains *why* it is off — the title — out of reach of the
   // keyboard and the screen reader that most need it.
   bell.setAttribute('aria-disabled', String(state === 'unsupported' || state === 'blocked'));
-  bellLabel.textContent = state === 'blocked' ? 'Alerts blocked' : 'Alerts';
+  // The button is a glyph now, so its name is the only thing carrying the
+  // state to a screen reader — and "blocked" is exactly the case where a
+  // sighted user gets a dashed border and everyone else got nothing.
+  bell.setAttribute('aria-label', state === 'blocked' ? 'Alerts blocked' : 'Alerts');
   bell.title =
     state === 'unsupported'
       ? 'This browser has no notification support'
@@ -959,10 +1028,10 @@ bell.addEventListener('click', async () => {
 
 paintBell();
 
-const groupSel = document.getElementById('pick-group');
 groupSel.value = filters.groupBy;
 groupSel.addEventListener('change', () => {
   filters.groupBy = groupSel.value;
+  paintChips();
   applyFilters();
 });
 
@@ -970,7 +1039,7 @@ groupSel.addEventListener('change', () => {
 
 /** Must stay in step with MODES in src/views.js. */
 const MODES = ['wall', 'focus', 'tail'];
-const modeSel = document.getElementById('pick-mode');
+const modeBtns = [...document.querySelectorAll('.seg-btn')];
 const focusEl = document.getElementById('focus');
 const tailEl = document.getElementById('tail');
 const groupLabel = document.getElementById('pick-group-label');
@@ -1002,7 +1071,7 @@ function setMode(mode, { fromUser = false } = {}) {
   if (!MODES.includes(mode)) mode = 'wall';
   const changed = filters.mode !== mode;
   filters.mode = mode;
-  modeSel.value = mode;
+  for (const b of modeBtns) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
   document.body.dataset.viewMode = mode;
 
   wall.hidden = mode !== 'wall';
@@ -1024,7 +1093,9 @@ function setMode(mode, { fromUser = false } = {}) {
   layout();
 }
 
-modeSel.addEventListener('change', () => setMode(modeSel.value, { fromUser: true }));
+for (const btn of modeBtns) {
+  btn.addEventListener('click', () => setMode(btn.dataset.mode, { fromUser: true }));
+}
 
 /*
   A click in the rail promotes that session rather than opening the drawer — in
@@ -1080,7 +1151,6 @@ const THEME_LABEL = { auto: 'Auto', light: 'Light', dark: 'Dark' };
 
 const themeBtn = document.getElementById('theme');
 const themeIcon = document.getElementById('theme-icon');
-const themeLabel = document.getElementById('theme-label');
 const systemLight = matchMedia('(prefers-color-scheme: light)');
 
 function applyTheme() {
@@ -1088,7 +1158,7 @@ function applyTheme() {
   const dark = pref === 'auto' ? !systemLight.matches : pref === 'dark';
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   themeIcon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${THEME_ICON[pref]}</svg>`;
-  themeLabel.textContent = THEME_LABEL[pref];
+  themeBtn.setAttribute('aria-label', `Theme: ${THEME_LABEL[pref]}`);
   themeBtn.title =
     pref === 'auto'
       ? `Following your system, currently ${dark ? 'dark' : 'light'}. Click for light.`
@@ -1107,6 +1177,69 @@ systemLight.addEventListener('change', () => {
 
 applyTheme();
 
+/* ── the sheet ─────────────────────────────────────────────────────────── */
+
+/*
+  Below the breakpoint, .bar-shelf stops being a layout no-op and becomes a
+  panel pinned to the bottom of the viewport. Nothing moves in the DOM, so this
+  only has to own three things: open-ness, focus, and Escape — the same three
+  the inspector drawer owns.
+*/
+const shelf = document.getElementById('bar-shelf');
+const sheetOpenBtn = document.getElementById('sheet-open');
+const sheetScrim = document.getElementById('sheet-scrim');
+
+/*
+  Read from CSS rather than repeated here. A breakpoint duplicated across two
+  files is a pair that stays in step until the day it does not, and the failure
+  is a sheet that cannot be closed by widening the window.
+*/
+const sheetTier = matchMedia(
+  `(max-width: ${getComputedStyle(document.documentElement).getPropertyValue('--sheet-tier').trim() || '820px'})`
+);
+
+function setSheet(open) {
+  document.body.dataset.sheet = open ? 'open' : 'shut';
+  sheetOpenBtn.setAttribute('aria-expanded', String(open));
+  sheetScrim.hidden = !open;
+  document.body.dataset.locked = String(open);
+
+  /*
+    The dialog role is added and removed rather than sitting in the markup.
+    Above the breakpoint the shelf is not a dialog, it is three regions of a
+    header, and announcing it as one to every desktop screen-reader user would
+    be a worse bug than the one this whole change is fixing.
+  */
+  if (open) {
+    shelf.setAttribute('role', 'dialog');
+    shelf.setAttribute('aria-modal', 'true');
+    // The first control, not the heading: landing on the title means tabbing
+    // past the chrome before reaching anything you can act on.
+    shelf.querySelector('.bar-controls select, .bar-controls button')?.focus();
+  } else {
+    shelf.removeAttribute('role');
+    shelf.removeAttribute('aria-modal');
+    sheetOpenBtn.focus();
+  }
+}
+
+sheetOpenBtn.addEventListener('click', () => setSheet(document.body.dataset.sheet !== 'open'));
+sheetScrim.addEventListener('click', () => setSheet(false));
+document.getElementById('sheet-close').addEventListener('click', () => setSheet(false));
+
+/*
+  Widening the window puts every region back in the bar on its own, but the
+  scrim, the scroll lock and the open flag would all survive it — leaving a
+  backdrop over a header that is working perfectly well.
+*/
+sheetTier.addEventListener('change', (e) => {
+  if (!e.matches && document.body.dataset.sheet === 'open') setSheet(false);
+});
+
+/* Not setSheet(false) — that moves focus to the trigger, and doing so during
+   module evaluation steals it from the page on load. */
+document.body.dataset.sheet = 'shut';
+
 setInterval(() => {
   clockEl.textContent = new Date().toLocaleTimeString([], { hour12: false });
   for (const tile of tiles.values()) {
@@ -1117,14 +1250,27 @@ setInterval(() => {
 
 /* ── stream ────────────────────────────────────────────────────────────── */
 
+const linkWord = link.querySelector('.clips');
+
+/*
+  A lamp reading "live" next to a green dot is the dot saying it twice, and on a
+  phone that word is competing with the thing the page exists to show. A lamp
+  reading "signal lost" is the only moment the lamp is worth reading, so that
+  one keeps its word at every width — see the media query in styles.css, which
+  clips the word only while data-up is true and data-stale is not.
+*/
+function setLink(word, title) {
+  linkWord.textContent = word;
+  link.title = title || word;
+}
+
 function connect() {
   if (authFailed) {
     // No point opening an EventSource that will just 401 and retry forever —
     // and "signal lost" would tell the user the wrong thing to try (wait for
     // the network) instead of the right one (reopen the link).
     link.dataset.up = 'false';
-    link.textContent = 'no credential';
-    link.title = 'Reopen the link your operator gave you — it carries the token this page needs.';
+    setLink('no credential', 'Reopen the link your operator gave you — it carries the token this page needs.');
     document.body.dataset.stale = 'true';
     layout(); // repaint the empty card now instead of leaving "Connecting" up forever
     return;
@@ -1135,7 +1281,7 @@ function connect() {
   es.addEventListener('open', () => {
     link.dataset.up = 'true';
     link.dataset.stale = 'false';
-    link.textContent = 'live';
+    setLink('live');
     delete document.body.dataset.stale;
   });
 
@@ -1148,7 +1294,7 @@ function connect() {
    */
   es.addEventListener('error', () => {
     link.dataset.up = 'false';
-    link.textContent = 'signal lost';
+    setLink('signal lost');
     // Not on the very first connect — that is "connecting", not "went stale".
     if (booted) {
       link.dataset.stale = 'true';
@@ -1276,6 +1422,7 @@ setMode(filters.mode);
 
 wireSave({ composeView, postView });
 mountViews({ initialId: viewParam || filters.view, onSelect: applyView });
+paintChips();
 
 layout();
 establishSession().then(() => {

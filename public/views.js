@@ -69,6 +69,9 @@ function paint(errors) {
       const opt = document.createElement('option');
       opt.value = v.id;
       opt.textContent = v.name;
+      // The chip reads data-chip when it is there. Set it even though the name
+      // needs no cleaning, so there is one rule rather than two.
+      opt.dataset.chip = v.name;
       select.append(opt);
     }
     const sep = document.createElement('option');

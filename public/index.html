@@ -27,23 +27,51 @@
     />
   </head>
   <body>
-    <header class="masthead" id="masthead" data-mode="wall">
-      <div class="zone">
-        <div class="wordmark">agent<span>·</span>cctv</div>
+    <!--
+      Six regions, hairline-separated: who this is, what the wall says, which
+      sessions and how they are drawn, what you can narrow that to, what you can
+      do to it, and the state of the machine itself.
+
+      Left to right is the order the README already uses to explain the thing —
+      the view is the population, and the filters narrow within it. It is also
+      the order they stack in when the middle three drop into the sheet, which
+      is why they are grouped rather than merely adjacent.
+    -->
+    <header class="bar" id="masthead" data-mode="wall">
+      <div class="bar-id">
+        <svg class="i mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 8.5h17v9.5h-17z" />
+          <circle cx="12" cy="13.25" r="2.75" />
+          <path d="M8.5 8.5 10 5.5h4l1.5 3" />
+        </svg>
+        <span class="wordmark">agent<span>·</span>cctv</span>
       </div>
 
       <!-- Counts and state filter are the same three concepts, so they are one
            control: it reports the number and it is how you narrow to it. -->
-      <div class="zone">
+      <div class="bar-states">
         <div class="readouts" role="group" aria-label="Filter by state">
           <button class="readout" data-filter="all" data-kind="all" type="button" aria-pressed="true">
-            <b id="stat-all">0</b><span>all</span>
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="4" width="7" height="7" rx="1" />
+              <rect x="13" y="4" width="7" height="7" rx="1" />
+              <rect x="4" y="13" width="7" height="7" rx="1" />
+              <rect x="13" y="13" width="7" height="7" rx="1" />
+            </svg>
+            <b id="stat-all">0</b><span class="clips">all</span>
           </button>
           <button class="readout" data-filter="live" data-kind="live" type="button" aria-pressed="false">
-            <b id="stat-live">0</b><span>live</span>
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="2.75" fill="currentColor" stroke="none" />
+              <path d="M6.2 6.2a8.2 8.2 0 0 0 0 11.6M17.8 17.8a8.2 8.2 0 0 0 0-11.6" />
+            </svg>
+            <b id="stat-live">0</b><span class="clips">live</span>
           </button>
           <button class="readout" data-filter="busy" data-kind="busy" type="button" aria-pressed="false">
-            <b id="stat-busy">0</b><span>working</span>
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5" />
+            </svg>
+            <b id="stat-busy">0</b><span class="clips">working</span>
           </button>
           <button
             class="readout"
@@ -53,62 +81,188 @@
             aria-pressed="false"
             data-hot="false"
           >
-            <b id="stat-attention">0</b><span>need you</span>
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 10a6 6 0 1 0-12 0c0 4.5-2 5.5-2 5.5h16s-2-1-2-5.5" />
+              <path d="M10.3 19a2.2 2.2 0 0 0 3.4 0" />
+            </svg>
+            <b id="stat-attention">0</b><span class="clips">need you</span>
           </button>
         </div>
       </div>
 
-      <div class="masthead-spacer"></div>
+      <!--
+        Everything that leaves the bar on a narrow screen, in one wrapper.
 
-      <div class="zone wall-only">
-        <label class="pick" id="pick-view-label" hidden>
-          <span>view</span>
-          <select id="pick-view"></select>
-        </label>
-        <span class="view-warn" id="view-warn" role="status" hidden></span>
-        <label class="pick">
-          <span>agent</span>
-          <select id="pick-source"><option value="all">all</option></select>
-        </label>
-        <label class="pick">
-          <span>project</span>
-          <select id="pick-project"><option value="all">all</option></select>
-        </label>
-        <label class="pick">
-          <span>mode</span>
-          <select id="pick-mode">
-            <option value="wall">wall</option>
-            <option value="focus">focus</option>
-            <option value="tail">tail</option>
-          </select>
-        </label>
-        <label class="pick" id="pick-group-label">
-          <span>group by</span>
-          <select id="pick-group">
-            <option value="none">nothing</option>
-            <option value="project">project</option>
-            <option value="agent">agent</option>
-            <option value="state">state</option>
-            <option value="branch">branch</option>
-          </select>
-        </label>
+        The wrapper is `display: contents` at wide widths, so it has no box and
+        the three regions lay out as direct children of .bar exactly as if it
+        were not here. Below the sheet breakpoint it becomes the sheet itself.
+        It exists so the tiers have one thing to reposition instead of three
+        things to keep from colliding.
+      -->
+      <div class="bar-shelf" id="bar-shelf" aria-labelledby="sheet-title">
+        <!-- Only ever visible while the shelf is the sheet. At wide widths the
+             shelf has no box, and neither do these. -->
+        <div class="sheet-chrome">
+          <h2 id="sheet-title">Controls</h2>
+          <button class="chip" id="sheet-close" type="button">Done</button>
+        </div>
+
+        <!-- Which sessions are on the wall, and how they are drawn. -->
+        <div class="bar-controls wall-only">
+          <label class="chip-pick" id="pick-view-label" data-label="View" data-always="true" data-set="true">
+            <span class="chip-icon">
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m12 3.5 8.5 4.2-8.5 4.3-8.5-4.3Z" />
+                <path d="m3.5 12 8.5 4.3 8.5-4.3" />
+                <path d="m3.5 16.2 8.5 4.3 8.5-4.3" />
+              </svg>
+            </span>
+            <span class="chip-value"></span>
+            <select id="pick-view" aria-label="Which view"></select>
+          </label>
+          <span class="view-warn" id="view-warn" role="status" hidden></span>
+          <div class="seg" role="group" aria-label="Display mode">
+            <button
+              class="seg-btn"
+              data-mode="wall"
+              type="button"
+              aria-pressed="true"
+              aria-label="Wall — every session as a tile"
+              title="Wall — every session as a tile"
+            >
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3.5" y="4.5" width="7.5" height="6.5" rx="1" />
+                <rect x="13" y="4.5" width="7.5" height="6.5" rx="1" />
+                <rect x="3.5" y="13" width="7.5" height="6.5" rx="1" />
+                <rect x="13" y="13" width="7.5" height="6.5" rx="1" />
+              </svg>
+            </button>
+            <button
+              class="seg-btn"
+              data-mode="focus"
+              type="button"
+              aria-pressed="false"
+              aria-label="Focus — one session big, the rest as a rail"
+              title="Focus — one session big, the rest as a rail"
+            >
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3.5" y="4.5" width="11" height="15" rx="1" />
+                <rect x="16.5" y="4.5" width="4" height="4" rx="1" />
+                <rect x="16.5" y="10" width="4" height="4" rx="1" />
+                <rect x="16.5" y="15.5" width="4" height="4" rx="1" />
+              </svg>
+            </button>
+            <button
+              class="seg-btn"
+              data-mode="tail"
+              type="button"
+              aria-pressed="false"
+              aria-label="Tail — the whole room as one stream"
+              title="Tail — the whole room as one stream"
+            >
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6.5h16M4 11h16M4 15.5h11M4 20h7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Narrowing within that. Three controls that sit on their default
+             nearly all the time, which is what the chip is about. -->
+        <div class="bar-filters wall-only">
+          <label class="chip-pick" data-label="Agent" data-set="false">
+            <span class="chip-icon">
+              <svg class="i chip-default" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m12 4 1.9 4.9L18.8 10.8l-4.9 1.9L12 17.6l-1.9-4.9L5.2 10.8l4.9-1.9Z" />
+              </svg>
+              <span class="chip-mark" id="chip-mark-source"></span>
+            </span>
+            <span class="chip-value"></span>
+            <select id="pick-source" aria-label="Filter by agent">
+              <option value="all">all</option>
+            </select>
+          </label>
+
+          <label class="chip-pick" data-label="Project" data-set="false">
+            <span class="chip-icon">
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l2 2.5h7.8a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />
+              </svg>
+            </span>
+            <span class="chip-value"></span>
+            <select id="pick-project" aria-label="Filter by project">
+              <option value="all">all</option>
+            </select>
+          </label>
+
+          <label class="chip-pick" id="pick-group-label" data-label="Group by" data-set="false">
+            <span class="chip-icon">
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 5.5h6M4 9.5h6M14 5.5h6M14 9.5h6M4 15h16M4 19h16" />
+              </svg>
+            </span>
+            <span class="chip-value"></span>
+            <select id="pick-group" aria-label="Group the wall by">
+              <option value="none" data-chip="ungrouped">nothing</option>
+              <option value="project" data-chip="by project">project</option>
+              <option value="agent" data-chip="by agent">agent</option>
+              <option value="state" data-chip="by state">state</option>
+              <option value="branch" data-chip="by branch">branch</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="bar-actions">
+          <button
+            class="act"
+            id="archive-toggle"
+            type="button"
+            aria-pressed="false"
+            aria-label="History — sessions that have already finished"
+            title="History — sessions that have already finished"
+          >
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3.7 12a8.3 8.3 0 1 0 2.6-6" />
+              <path d="M3.2 4v4.2h4.2" />
+              <path d="M12 8.2V12l2.8 1.7" />
+            </svg>
+          </button>
+          <button class="act bell" id="bell" type="button" data-state="off" aria-pressed="false" aria-label="Alerts">
+            <svg class="i bell-glyph" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 10a6 6 0 1 0-12 0c0 4.5-2 5.5-2 5.5h16s-2-1-2-5.5" />
+              <path d="M10.3 19a2.2 2.2 0 0 0 3.4 0" />
+            </svg>
+          </button>
+          <button class="act theme" id="theme" type="button" aria-label="Theme">
+            <span id="theme-icon"></span>
+          </button>
+        </div>
       </div>
 
-      <div class="zone">
-        <button class="chip" id="archive-toggle" type="button" aria-pressed="false">History</button>
-        <button class="bell" id="bell" type="button" data-state="off" aria-pressed="false">
-          <span id="bell-label">Alerts</span>
-        </button>
-        <button class="theme" id="theme" type="button">
-          <span id="theme-icon"></span><span id="theme-label">Auto</span>
-        </button>
-      </div>
-
-      <div class="zone">
+      <div class="bar-status">
         <div class="clock" id="clock">--:--:--</div>
-        <div class="link-state" id="link" data-up="false">connecting</div>
+        <div class="link-state" id="link" data-up="false"><span class="clips">connecting</span></div>
       </div>
+
+      <button
+        class="act sheet-open"
+        id="sheet-open"
+        type="button"
+        aria-expanded="false"
+        aria-controls="bar-shelf"
+        aria-label="Controls"
+        title="Controls"
+      >
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16" />
+          <circle cx="9" cy="7" r="2.2" />
+          <circle cx="15" cy="12" r="2.2" />
+          <circle cx="9" cy="17" r="2.2" />
+        </svg>
+      </button>
     </header>
+
+    <div class="sheet-scrim" id="sheet-scrim" hidden></div>
 
     <p class="sr-only" id="announce" role="status" aria-live="polite"></p>
 
