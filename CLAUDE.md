@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
-npm test                                          # whole suite (node --test, 183 tests)
+npm test                                          # whole suite (node --test, 232 tests)
 node --test test/views.test.js                    # one file
 node --test --test-name-pattern "mode defaults"   # one test, by name
 
