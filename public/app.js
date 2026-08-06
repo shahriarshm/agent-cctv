@@ -964,7 +964,6 @@ projectSel.addEventListener('change', () => {
  * this is a click and not a preference toggle somewhere quiet.
  */
 const bell = document.getElementById('bell');
-const bellLabel = document.getElementById('bell-label');
 
 function paintBell() {
   const supported = typeof Notification !== 'undefined';
@@ -977,7 +976,10 @@ function paintBell() {
   // one thing that explains *why* it is off — the title — out of reach of the
   // keyboard and the screen reader that most need it.
   bell.setAttribute('aria-disabled', String(state === 'unsupported' || state === 'blocked'));
-  bellLabel.textContent = state === 'blocked' ? 'Alerts blocked' : 'Alerts';
+  // The button is a glyph now, so its name is the only thing carrying the
+  // state to a screen reader — and "blocked" is exactly the case where a
+  // sighted user gets a dashed border and everyone else got nothing.
+  bell.setAttribute('aria-label', state === 'blocked' ? 'Alerts blocked' : 'Alerts');
   bell.title =
     state === 'unsupported'
       ? 'This browser has no notification support'
@@ -1133,7 +1135,6 @@ const THEME_LABEL = { auto: 'Auto', light: 'Light', dark: 'Dark' };
 
 const themeBtn = document.getElementById('theme');
 const themeIcon = document.getElementById('theme-icon');
-const themeLabel = document.getElementById('theme-label');
 const systemLight = matchMedia('(prefers-color-scheme: light)');
 
 function applyTheme() {
@@ -1141,7 +1142,7 @@ function applyTheme() {
   const dark = pref === 'auto' ? !systemLight.matches : pref === 'dark';
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   themeIcon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${THEME_ICON[pref]}</svg>`;
-  themeLabel.textContent = THEME_LABEL[pref];
+  themeBtn.setAttribute('aria-label', `Theme: ${THEME_LABEL[pref]}`);
   themeBtn.title =
     pref === 'auto'
       ? `Following your system, currently ${dark ? 'dark' : 'light'}. Click for light.`

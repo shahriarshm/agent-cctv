@@ -618,7 +618,72 @@ body[data-locked='true'] {
   white-space: nowrap;
 }
 
-.bell,
+/*
+  The three things you can do to the wall, as opposed to the things you can
+  narrow it to. Square icon buttons: at this size a word next to each cost more
+  than three times what the glyph does and said the same thing.
+*/
+.act {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink-2);
+  font: inherit;
+  padding: 6px;
+  cursor: pointer;
+  flex: none;
+}
+
+.act:hover:not([aria-disabled='true']) {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.act[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--panel);
+}
+
+/*
+  Armed alerts. The bell fills rather than lighting a separate dot beside it —
+  the dot existed because the button had a word next to it and something had to
+  carry the state; the glyph can carry its own.
+*/
+.bell[data-state='on'] {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.bell[data-state='on'] .bell-glyph {
+  fill: currentColor;
+  filter: drop-shadow(var(--glow) rgba(160, 200, 255, 0.6));
+}
+
+.bell[aria-disabled='true'] {
+  cursor: not-allowed;
+  color: var(--ink-3);
+  border-style: dashed;
+}
+
+/* Cycles auto → light → dark. The glyph is the current *resolved* look, so the
+   button always shows what you are getting, not what you asked for. */
+.theme svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Still used by the save dialog and the archive's own controls. */
 .chip {
   appearance: none;
   display: flex;
@@ -636,8 +701,7 @@ body[data-locked='true'] {
   white-space: nowrap;
 }
 
-.chip:hover,
-.bell:hover:not([aria-disabled='true']) {
+.chip:hover {
   color: var(--ink);
   border-color: var(--ink-3);
 }
@@ -646,69 +710,6 @@ body[data-locked='true'] {
   background: var(--ink);
   border-color: var(--ink);
   color: var(--panel);
-}
-
-/* Armed-alerts indicator. Neither amber nor tally: those already mean "rolling"
-   and "needs a human", and this is about the wall, not about a session. */
-.bell::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--ink-3);
-  flex: none;
-}
-
-.bell[data-state='on'] {
-  color: var(--ink);
-  border-color: var(--ink-3);
-}
-
-.bell[data-state='on']::before {
-  background: var(--ink);
-  box-shadow: var(--glow) rgba(160, 200, 255, 0.6);
-}
-
-.bell[aria-disabled='true'] {
-  cursor: not-allowed;
-  color: var(--ink-3);
-  border-style: dashed;
-}
-
-/* Cycles auto → light → dark. The glyph is the current *resolved* look, so the
-   button always shows what you are getting, not what you asked for. */
-.theme {
-  appearance: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-sm);
-  background: var(--panel-2);
-  color: var(--ink-2);
-  font: inherit;
-  font-size: var(--t-meta);
-  letter-spacing: 0.04em;
-  padding: 5px 9px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.theme:hover {
-  color: var(--ink);
-  border-color: var(--ink-3);
-}
-
-.theme svg {
-  width: 13px;
-  height: 13px;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .clock {

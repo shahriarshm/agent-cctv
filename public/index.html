@@ -206,12 +206,28 @@
         </div>
 
         <div class="bar-actions">
-          <button class="chip" id="archive-toggle" type="button" aria-pressed="false">History</button>
-          <button class="bell" id="bell" type="button" data-state="off" aria-pressed="false">
-            <span id="bell-label">Alerts</span>
+          <button
+            class="act"
+            id="archive-toggle"
+            type="button"
+            aria-pressed="false"
+            aria-label="History — sessions that have already finished"
+            title="History — sessions that have already finished"
+          >
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3.7 12a8.3 8.3 0 1 0 2.6-6" />
+              <path d="M3.2 4v4.2h4.2" />
+              <path d="M12 8.2V12l2.8 1.7" />
+            </svg>
           </button>
-          <button class="theme" id="theme" type="button">
-            <span id="theme-icon"></span><span id="theme-label">Auto</span>
+          <button class="act bell" id="bell" type="button" data-state="off" aria-pressed="false" aria-label="Alerts">
+            <svg class="i bell-glyph" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 10a6 6 0 1 0-12 0c0 4.5-2 5.5-2 5.5h16s-2-1-2-5.5" />
+              <path d="M10.3 19a2.2 2.2 0 0 0 3.4 0" />
+            </svg>
+          </button>
+          <button class="act theme" id="theme" type="button" aria-label="Theme">
+            <span id="theme-icon"></span>
           </button>
         </div>
       </div>
