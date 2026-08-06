@@ -37,6 +37,25 @@ export const CODEX_DIR = process.env.AGENT_CCTV_CODEX_DIR || path.join(HOME, '.c
 export const CODEX_SESSIONS = path.join(CODEX_DIR, 'sessions');
 export const CODEX_INDEX = path.join(CODEX_DIR, 'session_index.jsonl');
 
+/**
+ * Gemini CLI keeps per-project chat logs under tmp/<project-slug>/chats/.
+ * "tmp" is Google's name, not a hint that the data is disposable — the CLI
+ * resumes sessions from these files.
+ */
+export const GEMINI_DIR = process.env.AGENT_CCTV_GEMINI_DIR || path.join(HOME, '.gemini');
+export const GEMINI_TMP = path.join(GEMINI_DIR, 'tmp');
+
+/**
+ * OpenCode and Hermes keep sessions in sqlite, not JSONL. Same rules as the
+ * rest: undocumented internals, read-only, behind a source adapter.
+ */
+export const OPENCODE_DIR =
+  process.env.AGENT_CCTV_OPENCODE_DIR || path.join(HOME, '.local', 'share', 'opencode');
+export const OPENCODE_DB = path.join(OPENCODE_DIR, 'opencode.db');
+
+export const HERMES_DIR = process.env.AGENT_CCTV_HERMES_DIR || path.join(HOME, '.hermes');
+export const HERMES_DB = path.join(HERMES_DIR, 'state.db');
+
 export const DEFAULT_PORT = 4599;
 export const DEFAULT_HOST = '127.0.0.1';
 
