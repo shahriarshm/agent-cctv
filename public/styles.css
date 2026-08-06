@@ -454,6 +454,115 @@ body[data-locked='true'] {
   color: var(--ink);
 }
 
+/*
+  A picker that costs width only when it is doing something.
+
+  "Agent: all" and "project: all" together were about 370px of header saying
+  nothing at all, and that was most of why the row could not fit. A chip on its
+  default value is an icon; set it, and it shows the value and lights up. The
+  width the bar spends on filtering is now proportional to how much filtering
+  is actually on.
+
+  The <select> is the real control, laid over the chip at zero opacity, so the
+  native picker, the keyboard, the screen reader and the iOS wheel all keep
+  working. There is no listbox here to reimplement.
+*/
+.chip-pick {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink-3);
+  font-size: var(--t-meta);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.chip-pick:hover {
+  color: var(--ink-2);
+  border-color: var(--edge);
+}
+
+/* :focus-within and not :focus, because the thing that actually takes focus is
+   the invisible select on top. Without this the chip is a keyboard black hole:
+   focusable, and with no way to see that it is focused. */
+.chip-pick:focus-within {
+  border-color: var(--ink-3);
+  color: var(--ink);
+  outline: 2px solid var(--steel);
+  outline-offset: 1px;
+}
+
+.chip-pick[data-set='true'] {
+  background: var(--panel-2);
+  border-color: var(--edge);
+  color: var(--ink);
+}
+
+.chip-icon {
+  display: flex;
+  flex: none;
+}
+
+.chip-mark {
+  display: none;
+  width: 13px;
+  height: 13px;
+}
+
+.chip-mark svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+}
+
+/* An agent chip holding a real agent shows that agent's own mark instead of the
+   generic one — the same marks the tiles use, so the chip and the tiles it
+   filters to are visibly the same thing. */
+.chip-pick[data-set='true'] .chip-mark:not(:empty) {
+  display: block;
+}
+
+.chip-pick[data-set='true'] .chip-default:has(+ .chip-mark:not(:empty)) {
+  display: none;
+}
+
+.chip-value {
+  min-width: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A chip on its default has nothing worth the pixels. Hidden rather than
+   emptied so the element keeps its place and the chip does not resize by a
+   pixel on every repaint. */
+.chip-pick[data-set='false'] .chip-value {
+  display: none;
+}
+
+.chip-pick select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  cursor: pointer;
+  /* iOS zooms the whole page when a form control under 16px takes focus. The
+     select is invisible, but the zoom is not. */
+  font-size: 16px;
+}
+
 /* A view file that would not parse. Ember, not red: red on this wall means a
    session is blocked on you, and a config typo is the machine's problem. */
 .view-warn {

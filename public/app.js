@@ -857,6 +857,8 @@ archiveDays.addEventListener('change', loadArchive);
 
 const sourceSel = document.getElementById('pick-source');
 const projectSel = document.getElementById('pick-project');
+const groupSel = document.getElementById('pick-group');
+const viewSel = document.getElementById('pick-view');
 
 function applyFilters() {
   saveFilters();
@@ -882,6 +884,10 @@ function refreshFilterOptions() {
         const label = v === 'all' ? `all (${values.length})` : `${labelFor(v)} (${counts.get(v)})`;
         const opt = el('option', null, label);
         opt.value = v;
+        // The chip shows the name without the tally: the count belongs in the
+        // open list, where you are choosing, not on the closed chip, where you
+        // are reading what is set.
+        opt.dataset.chip = v === 'all' ? 'all' : labelFor(v);
         select.append(opt);
       }
     } else {
@@ -896,15 +902,60 @@ function refreshFilterOptions() {
 
   build(sourceSel, 'source', all.map((s) => s.source).filter(Boolean), (v) => sourceMeta(v).label);
   build(projectSel, 'project', all.map((s) => s.project).filter(Boolean), (v) => v);
+  paintChips();
+}
+
+/*
+  A chip earns its width by being set. Anything that changes a select's value or
+  rebuilds its options has to come back through here, or the chip goes on
+  showing the last thing it was told.
+*/
+const CHIP_DEFAULT = { 'pick-source': 'all', 'pick-project': 'all', 'pick-group': 'none' };
+
+function paintChip(select) {
+  const chip = select.closest('.chip-pick');
+  if (!chip) return;
+  const opt = select.selectedOptions[0];
+  const value = opt ? opt.dataset.chip || opt.textContent : '';
+  chip.querySelector('.chip-value').textContent = value;
+  const dflt = CHIP_DEFAULT[select.id];
+  chip.dataset.set = String(chip.dataset.always === 'true' || (dflt !== undefined && select.value !== dflt));
+  chip.title = `${chip.dataset.label}: ${value}`;
+}
+
+/*
+  The agent marks are the tiles' own, so a chip filtered to Claude Code and the
+  tiles it leaves on the wall carry the same glyph.
+
+  Written as two statements rather than one because test/spa-guard.test.js
+  matches its allowlist against the literal right-hand side, and `meta.icon` is
+  what is on it. Reusing an approved form beats growing that list — a short
+  list is the whole point of it.
+*/
+function paintAgentMark() {
+  const holder = document.getElementById('chip-mark-source');
+  if (sourceSel.value === 'all') {
+    holder.replaceChildren();
+    return;
+  }
+  const meta = sourceMeta(sourceSel.value);
+  holder.innerHTML = meta.icon;
+}
+
+function paintChips() {
+  for (const sel of [sourceSel, projectSel, groupSel, viewSel]) paintChip(sel);
+  paintAgentMark();
 }
 
 sourceSel.addEventListener('change', () => {
   filters.source = sourceSel.value;
+  paintChips();
   applyFilters();
 });
 
 projectSel.addEventListener('change', () => {
   filters.project = projectSel.value;
+  paintChips();
   applyFilters();
 });
 
@@ -959,10 +1010,10 @@ bell.addEventListener('click', async () => {
 
 paintBell();
 
-const groupSel = document.getElementById('pick-group');
 groupSel.value = filters.groupBy;
 groupSel.addEventListener('change', () => {
   filters.groupBy = groupSel.value;
+  paintChips();
   applyFilters();
 });
 
@@ -1289,6 +1340,7 @@ setMode(filters.mode);
 
 wireSave({ composeView, postView });
 mountViews({ initialId: viewParam || filters.view, onSelect: applyView });
+paintChips();
 
 layout();
 establishSession().then(() => {
