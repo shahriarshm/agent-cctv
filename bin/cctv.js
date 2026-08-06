@@ -2,8 +2,10 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { start } from '../src/server.js';
+import { Tunnel } from '../src/tunnel.js';
 import { Store } from '../src/store.js';
 import { resolve, validate, ConfigError } from '../src/config.js';
 import { capabilities } from '../src/sources/claude-code/index.js';
@@ -104,6 +106,13 @@ ${c.bold('Options')}
   --public-url <url>  Public URL when behind a reverse proxy ${c.dim('(adds its host to the allowlist)')}
   --project        install/uninstall into ./.claude/settings.json instead of global
 
+${c.bold('Publishing')} ${c.dim('— puts the dashboard on the public internet')}
+  --tunnel <name>     Publish through ${c.bold('cloudflare')} or ${c.bold('ngrok')} ${c.dim('(the binary must be installed)')}
+  --tunnel-cmd <cmd>  Publish through any command that opens a tunnel
+  --tunnel-args <a>   Extra arguments for the provider binary
+  --tunnel-ttl <30m>  Close the tunnel after this long ${c.dim('(the wall keeps running)')}
+  --yes               Skip the confirmation ${c.dim('(required when not on a terminal)')}
+
 ${c.dim('No installation is required to watch Claude Code — just run it.')}
 
 ${c.bold('Environment')}
@@ -112,6 +121,8 @@ ${c.bold('Environment')}
   AGENT_CCTV_HOST        Bind address
   AGENT_CCTV_PORT        Port
   AGENT_CCTV_VIEWS_DIR   Where view presets are read from ${c.dim('(default ~/.agent-cctv/views)')}
+  AGENT_CCTV_TUNNEL      Same as --tunnel
+  AGENT_CCTV_TUNNEL_ARGS Same as --tunnel-args
 `;
 
 function openBrowser(url) {
@@ -120,6 +131,32 @@ function openBrowser(url) {
   try {
     spawn(cmd, [url], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref();
   } catch {}
+}
+
+/**
+ * The one place a person is asked.
+ *
+ * Everything else about publishing is mechanism; this is the part that makes
+ * it a decision rather than a typo. --yes skips it, and validate() has already
+ * refused a non-TTY that did not pass --yes, so reaching here means there is
+ * somebody to answer.
+ */
+async function confirmPublish(cfg) {
+  if (cfg.assumeYes) return true;
+  const how = cfg.tunnel ? `${cfg.tunnel} · ${cfg.tunnel === 'ngrok' ? 'ngrok' : 'cloudflared'}` : cfg.tunnelCmd;
+  console.log('');
+  console.log(`  ${c.yellow('This publishes the dashboard on the public internet.')}`);
+  console.log('');
+  console.log('  Anyone with the link and its token can read every session on this');
+  console.log('  machine — including the source code your agents are working on.');
+  console.log('');
+  console.log(`  ${c.dim('through')}      ${how}`);
+  console.log(`  ${c.dim('guarded by')}   a ${cfg.token.length}-character token, carried in the link`);
+  console.log('');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise((r) => rl.question(`  Type ${c.bold('yes')} to publish: `, r));
+  rl.close();
+  return answer.trim().toLowerCase() === 'yes';
 }
 
 async function cmdStart(flags) {
@@ -134,7 +171,7 @@ async function cmdStart(flags) {
 
   let cfg;
   try {
-    for (const name of ['host', 'port', 'public-url']) {
+    for (const name of ['host', 'port', 'public-url', 'tunnel', 'tunnel-cmd', 'tunnel-args', 'tunnel-ttl']) {
       if (flags[name] === true || flags[name] === '') {
         throw new ConfigError(`--${name} requires a value.`);
       }
@@ -149,6 +186,12 @@ async function cmdStart(flags) {
     return;
   }
   const { port, host, token } = cfg;
+
+  // Asked before anything binds, so declining leaves no trace at all.
+  if ((cfg.tunnel || cfg.tunnelCmd) && !(await confirmPublish(cfg))) {
+    console.log(c.dim('\n  Nothing was published. Run without --tunnel for the local wall.\n'));
+    return;
+  }
 
   let server;
   try {
@@ -180,6 +223,67 @@ async function cmdStart(flags) {
     console.error(c.dim(`  could not write ${CONFIG_FILE} (${err.message}) — continuing without it`));
   }
 
+  // Started after the bind, so it points at the port actually taken rather
+  // than the one requested — and after writeConfig, so a tunnel failure cannot
+  // leave the state file describing a run that never happened.
+  let tunnel = null;
+  let publicBase = null;
+  if (cfg.tunnel || cfg.tunnelCmd) {
+    tunnel = new Tunnel({
+      provider: cfg.tunnel,
+      cmd: cfg.tunnelCmd,
+      args: cfg.tunnelArgs,
+      port,
+      host,
+      publicUrl: cfg.publicUrlRaw,
+      timeoutMs: Number(process.env.AGENT_CCTV_TUNNEL_TIMEOUT_MS) || undefined,
+    });
+    try {
+      const published = await tunnel.start();
+      server.setTunnel({
+        host: published.host,
+        provider: cfg.tunnel || 'custom',
+        url: published.url,
+        since: Date.now(),
+      });
+      publicBase = published.url.endsWith('/') ? published.url : published.url + '/';
+    } catch (err) {
+      // A failure *before* publishing means the thing the operator asked for
+      // did not happen and nothing is exposed — so it is an exit, and a
+      // supervisor should see one. A failure after is the opposite case; see
+      // the exit handler below.
+      tunnel.stop();
+      server.close();
+      console.error('');
+      console.error(`  ${c.red('✗')} ${err.message}`);
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+
+    // Not a restart. A re-opened quick tunnel comes back on a different
+    // hostname, so retrying cannot revive the link anybody was already sent —
+    // it would only mint a second one nobody has. The wall keeps running,
+    // because there may well be someone watching it.
+    tunnel.on('exit', (info) => {
+      server.setTunnel(null);
+      console.log('');
+      console.log(
+        `  ${c.yellow('!')} the tunnel closed${info.code == null ? '' : ` (code ${info.code})`} — that link is dead now.`
+      );
+      console.log(c.dim('  the wall is still running locally. re-run with --tunnel to publish again.'));
+      console.log('');
+    });
+
+    if (cfg.tunnelTtlMs) {
+      setTimeout(() => {
+        console.log(c.dim('\n  --tunnel-ttl reached — closing the tunnel. The wall stays up.\n'));
+        server.setTunnel(null);
+        tunnel.stop();
+      }, cfg.tunnelTtlMs).unref();
+    }
+  }
+
   const local = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/`;
   const rawBase = cfg.publicUrlRaw || local;
   // Normalise to a trailing slash before appending a query string — publicUrlRaw
@@ -202,6 +306,18 @@ async function cmdStart(flags) {
   console.log(`  ${c.cyan(bannerUrl)}`);
   if (token && cfg.tokenFromEnv) {
     console.log(`  ${c.dim('token from AGENT_CCTV_TOKEN — share it out of band, not this URL')}`);
+  }
+  // Two lines, on purpose. The bare URL is the one to say out loud; the
+  // tokened one is a bearer credential that survives being pasted into a
+  // channel, and printing them together invites the wrong one being copied.
+  if (publicBase) {
+    console.log('');
+    console.log(`  ${c.yellow('public')}  ${c.cyan(publicBase)}`);
+    console.log(c.dim('  send this one — with its token — to one person, not a channel:'));
+    console.log(`  ${c.dim(publicBase + (token ? `?token=${token}` : ''))}`);
+    if (cfg.tunnel === 'ngrok') {
+      console.log(c.dim('  ngrok free shows a click-through page first; the link still works after it.'));
+    }
   }
   console.log('');
   console.log(
@@ -226,6 +342,11 @@ async function cmdStart(flags) {
 
   const shutdown = () => {
     console.log(c.dim('\n  stopping…'));
+    // Before the server, and explicitly: a provider binary shares our process
+    // group and would usually get the same ctrl-c, but --tunnel-cmd's real
+    // tunnel is a grandchild that would otherwise keep forwarding to a port
+    // nothing is listening on.
+    tunnel?.stop();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1500).unref();
   };
