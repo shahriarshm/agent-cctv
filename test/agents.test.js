@@ -118,20 +118,24 @@ test('a $set snapshot and a later append of the same message emit once', () => {
 });
 
 test('gemini usage: latest input is the context, output sums once per message', () => {
-  const gm = (id, input, output) => ({
+  const gm = (id, input, output, cached = 0) => ({
     id,
     timestamp: '2026-08-06T10:00:10Z',
     type: 'gemini',
     content: [{ text: 'ok' }],
-    tokens: { input, output, cached: 0, thoughts: 10, tool: 0, total: input + output },
+    tokens: { input, output, cached, thoughts: 10, tool: 0, total: input + output },
     model: 'gemini-3.5-flash',
   });
-  const root = writeChat([header, gm('g1', 1000, 50), gm('g1', 1000, 50), gm('g2', 2000, 70)]);
+  const root = writeChat([header, gm('g1', 1000, 50), gm('g1', 1000, 50), gm('g2', 2000, 70, 500)]);
   const { usage, model } = collectChats(root)[0].meta;
   assert.equal(model, 'gemini-3.5-flash');
   assert.equal(usage.context, 2000, 'the newest request is the whole context');
   assert.equal(usage.output, 50 + 10 + 70 + 10, 'summed once per message id, thoughts included');
   assert.equal(usage.outputPartial, false, 'read from byte zero, so the sum is a true total');
+  assert.equal(usage.input, 1000 + 1500, 'uncached input sums once per message id — cached is a subset of input');
+  assert.equal(usage.cacheRead, 500);
+  assert.equal(usage.cacheWrite, null, 'gemini records no cache-write number');
+  assert.equal(usage.cost, null);
 });
 
 test('gemini patch carries transcript facts and nothing invented', () => {
