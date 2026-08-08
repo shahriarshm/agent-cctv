@@ -312,7 +312,10 @@ test('opencode capabilities: no database file means sqlite is not even the quest
 const HERMES_DDL = `
   CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, parent_session_id TEXT, model TEXT,
     started_at REAL, ended_at REAL, end_reason TEXT, cwd TEXT, git_branch TEXT, title TEXT,
-    output_tokens INTEGER DEFAULT 0, reasoning_tokens INTEGER DEFAULT 0);
+    output_tokens INTEGER DEFAULT 0, reasoning_tokens INTEGER DEFAULT 0,
+    input_tokens INTEGER DEFAULT 0, cache_read_tokens INTEGER DEFAULT 0,
+    cache_write_tokens INTEGER DEFAULT 0, estimated_cost_usd REAL DEFAULT 0,
+    actual_cost_usd REAL DEFAULT 0);
   CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT,
     content TEXT, tool_call_id TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL,
     reasoning_content TEXT, active INTEGER DEFAULT 1);
@@ -321,8 +324,8 @@ const HERMES_DDL = `
 function hermesFixture() {
   const { file, db } = openDb('hermes', HERMES_DDL);
   const sec = NOW / 1000;
-  db.prepare('INSERT INTO sessions (id, source, model, started_at, cwd, git_branch, title, output_tokens, reasoning_tokens) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run('h1', 'cli', 'hermes-4', sec - 60, '/home/u/proj', 'main', 'Wire the sensor', 300, 40);
+  db.prepare('INSERT INTO sessions (id, source, model, started_at, cwd, git_branch, title, output_tokens, reasoning_tokens, input_tokens, cache_read_tokens, cache_write_tokens, estimated_cost_usd, actual_cost_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run('h1', 'cli', 'hermes-4', sec - 60, '/home/u/proj', 'main', 'Wire the sensor', 300, 40, 10_900, 13_824, 0, 0.42, 0);
   // A gateway chat session: not a coding agent, not a tile.
   db.prepare('INSERT INTO sessions (id, source, started_at) VALUES (?,?,?)').run('h2', 'telegram', sec - 60);
   const msg = (ses, role, fields = {}) =>
@@ -349,6 +352,11 @@ test('hermes: cli sessions only, with tool calls paired across rows', { skip: !s
   assert.equal(main.patch.title, 'Wire the sensor');
   assert.equal(main.patch.usage.output, 340);
   assert.equal(main.patch.usage.context, null, 'cumulative input is not a context size');
+  assert.equal(main.patch.usage.input, 10_900, 'hermes input is the uncached portion — real rows show cache reads exceeding it');
+  assert.equal(main.patch.usage.cacheRead, 13_824);
+  assert.equal(main.patch.usage.cacheWrite, 0);
+  assert.equal(main.patch.usage.cost, 0.42, 'no actual figure, so the estimate — hermes says which is which');
+  assert.equal(main.patch.usage.costEstimated, true);
 
   const kinds = main.events.map((e) => e.kind);
   assert.deepEqual(kinds, ['prompt', 'tool_start', 'tool_end']);
@@ -357,6 +365,15 @@ test('hermes: cli sessions only, with tool calls paired across rows', { skip: !s
   assert.equal(start.tool.category, 'exec');
   const end = main.events.find((e) => e.kind === 'tool_end');
   assert.equal(end.tool.durationMs, 5000);
+});
+
+test('hermes cost: the measured figure beats the estimate, and zero is no figure at all', () => {
+  const row = { id: 'x', output_tokens: 10, reasoning_tokens: 0 };
+  assert.equal(hermesPatch({ ...row, actual_cost_usd: 1.5, estimated_cost_usd: 0.4 }).usage.cost, 1.5);
+  assert.equal(hermesPatch({ ...row, actual_cost_usd: 1.5, estimated_cost_usd: 0.4 }).usage.costEstimated, false);
+  assert.equal(hermesPatch({ ...row, estimated_cost_usd: 0.4 }).usage.cost, 0.4);
+  assert.equal(hermesPatch({ ...row, estimated_cost_usd: 0.4 }).usage.costEstimated, true);
+  assert.equal(hermesPatch(row).usage.cost, null, 'zero cost columns mean "not priced", not free');
 });
 
 test('hermes: a finished session says so, and a second poll repeats nothing', { skip: !sqlite }, () => {

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { HERMES_DB } from '../../paths.js';
-import { SqlitePoller, loadSqlite } from '../../sqlite-poll.js';
+import { SqlitePoller, loadSqlite, presentColumns } from '../../sqlite-poll.js';
 import { describeArgs, prose, safeJson, truncate, uid } from '../../util.js';
 
 /**
@@ -51,6 +51,8 @@ export function patchFromRow(row) {
     patch.state = 'ended';
     patch.endedReason = row.end_reason || 'ended';
   }
+  const actual = row.actual_cost_usd || 0;
+  const estimated = row.estimated_cost_usd || 0;
   patch.usage = {
     // Hermes records cumulative input, which is not a context size, and
     // inventing one from it would be confidently wrong.
@@ -58,12 +60,29 @@ export function patchFromRow(row) {
     contextWindow: null,
     output: (row.output_tokens || 0) + (row.reasoning_tokens || 0),
     outputPartial: false,
+    // The uncached portion: real rows show cache reads exceeding input_tokens,
+    // which an inclusive count could never do.
+    input: row.input_tokens ?? null,
+    cacheRead: row.cache_read_tokens ?? null,
+    cacheWrite: row.cache_write_tokens ?? null,
+    // Hermes keeps a measured figure and an estimate and says which is which;
+    // repeat its distinction rather than flattening it. Zero means "not
+    // priced", not free.
+    cost: actual > 0 ? actual : estimated > 0 ? estimated : null,
+    costEstimated: !(actual > 0),
   };
   return patch;
 }
 
 export const SESSION_COLS =
   'id, model, started_at, ended_at, end_reason, cwd, git_branch, title, output_tokens, reasoning_tokens';
+
+/** Columns newer Hermes schemas have and older ones may not — probed, not assumed. */
+export const OPTIONAL_COLS = ['input_tokens', 'cache_read_tokens', 'cache_write_tokens', 'estimated_cost_usd', 'actual_cost_usd'];
+
+export function sessionCols(db) {
+  return [SESSION_COLS, ...presentColumns(db, 'sessions', OPTIONAL_COLS)].join(', ');
+}
 
 function baseEvent(tsSeconds, sessionId, kind) {
   return {
@@ -209,7 +228,7 @@ export class HermesSource extends EventEmitter {
     */
     const sessions = db
       .prepare(
-        `SELECT ${SESSION_COLS} FROM sessions
+        `SELECT ${sessionCols(db)} FROM sessions
           WHERE source = 'cli' AND parent_session_id IS NULL
             AND (started_at >= ? OR (ended_at IS NULL AND started_at >= ?))`
       )
