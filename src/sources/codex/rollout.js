@@ -86,6 +86,13 @@ export class RolloutTailer extends JsonlTailer {
           contextWindow: p.info?.model_context_window || null,
           output: total?.output_tokens ?? 0,
           outputPartial: false,
+          // Same convention in the totals as in the live context: input_tokens
+          // includes the cached portion, so uncached is a subtraction.
+          input: total ? Math.max(0, (total.input_tokens || 0) - (total.cached_input_tokens || 0)) : null,
+          cacheRead: total ? total.cached_input_tokens || 0 : null,
+          cacheWrite: null,
+          cost: null,
+          costEstimated: false,
         };
       }
     }

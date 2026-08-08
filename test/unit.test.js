@@ -558,6 +558,10 @@ test('codex context comes from its own convention, not claude arithmetic', () =>
   assert.equal(usage.contextWindow, 258_400, 'codex does record a window, so a percentage is honest');
   assert.equal(usage.output, 6_947, "the running total codex keeps, not our sum");
   assert.equal(usage.outputPartial, false);
+  assert.equal(usage.input, 71_900, 'uncached input is a subtraction — codex folds the cached part in');
+  assert.equal(usage.cacheRead, 1_165_568);
+  assert.equal(usage.cacheWrite, null, 'codex records no cache-write number, so neither do we');
+  assert.equal(usage.cost, null);
 });
 
 /* ── codex rollouts ────────────────────────────────────────────────────── */
