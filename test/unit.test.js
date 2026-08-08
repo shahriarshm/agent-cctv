@@ -503,18 +503,26 @@ test('context is read from the newest request, never summed across them', () => 
   assert.equal(usage.context, 150_802, 'the latest request, all three input buckets added');
   assert.equal(usage.output, 500, 'output is genuinely incremental, so it does sum');
   assert.equal(usage.contextWindow, null, 'claude does not record a window, so no fake percentage');
+  assert.equal(usage.input, 5, 'billed input IS summed — every request pays its uncached tokens');
+  assert.equal(usage.cacheRead, 250_000);
+  assert.equal(usage.cacheWrite, 1_300);
+  assert.equal(usage.cost, null, 'claude code writes no dollar figure, so neither do we');
 });
 
-test('a subagent request never overwrites the main context number', () => {
+test('a subagent request counts toward the sums but never the context', () => {
   const { root } = writeTranscript([
     assistantWithUsage('a1', { input_tokens: 2, cache_read_input_tokens: 190_000, output_tokens: 100 }),
     // A sidechain carries its own fresh context; letting it land would make the
-    // session look like it had suddenly emptied out.
+    // session look like it had suddenly emptied out. Its tokens are still this
+    // session's work, though — a total that dropped them would understate
+    // every session that delegated anything.
     assistantWithUsage('a2', { input_tokens: 1, cache_read_input_tokens: 4_000, output_tokens: 50 }, { isSidechain: true }),
   ]);
   const { usage } = lastMeta(root);
   assert.equal(usage.context, 190_002);
-  assert.equal(usage.output, 100, "the subagent's output is not the main session's");
+  assert.equal(usage.output, 150, "the subagent's output is still this session's spend");
+  assert.equal(usage.input, 3, 'sidechain input counts toward the billed sums');
+  assert.equal(usage.cacheRead, 194_000);
 });
 
 test('a total that had to be summed says so when the log was joined mid-way', () => {
@@ -550,6 +558,10 @@ test('codex context comes from its own convention, not claude arithmetic', () =>
   assert.equal(usage.contextWindow, 258_400, 'codex does record a window, so a percentage is honest');
   assert.equal(usage.output, 6_947, "the running total codex keeps, not our sum");
   assert.equal(usage.outputPartial, false);
+  assert.equal(usage.input, 71_900, 'uncached input is a subtraction — codex folds the cached part in');
+  assert.equal(usage.cacheRead, 1_165_568);
+  assert.equal(usage.cacheWrite, null, 'codex records no cache-write number, so neither do we');
+  assert.equal(usage.cost, null);
 });
 
 /* ── codex rollouts ────────────────────────────────────────────────────── */

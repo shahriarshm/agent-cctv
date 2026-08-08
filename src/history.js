@@ -94,7 +94,7 @@ const SQLITE_HISTORY = {
     },
     load(db, id) {
       const row = db
-        .prepare(`SELECT ${opencode.SESSION_COLS} FROM session WHERE parent_id IS NULL AND id = ?`)
+        .prepare(`SELECT ${opencode.sessionCols(db)} FROM session WHERE parent_id IS NULL AND id = ?`)
         .get(id);
       if (!row) return null;
       const state = opencode.newPartState();
@@ -138,7 +138,7 @@ const SQLITE_HISTORY = {
     },
     load(db, id) {
       const row = db
-        .prepare(`SELECT ${hermes.SESSION_COLS} FROM sessions WHERE source = 'cli' AND parent_session_id IS NULL AND id = ?`)
+        .prepare(`SELECT ${hermes.sessionCols(db)} FROM sessions WHERE source = 'cli' AND parent_session_id IS NULL AND id = ?`)
         .get(id);
       if (!row) return null;
       const calls = new Map();

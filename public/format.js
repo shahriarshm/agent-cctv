@@ -63,6 +63,72 @@ export function tokens(n) {
   return (n / 1e6).toFixed(n < 1e7 ? 1 : 0) + 'M';
 }
 
+/** Dollar figures the drawer repeats from an agent's own accounting. */
+export function money(usd) {
+  if (!(usd > 0)) return '';
+  return usd < 0.005 ? '<$0.01' : '$' + usd.toFixed(2);
+}
+
+export function costLine(u) {
+  if (!u) return '';
+  const m = money(u.cost);
+  return m && u.costEstimated ? m + ' est.' : m;
+}
+
+/**
+ * The billed-token splits, only the parts this agent actually records — a null
+ * is "not written down", and printing 0 for it would read as a fact.
+ */
+export function tokenBreakdown(u) {
+  if (!u) return '';
+  const parts = [];
+  if (u.input != null) parts.push(tokens(u.input) + ' in');
+  if (u.cacheRead != null) parts.push(tokens(u.cacheRead) + ' cache read');
+  if (u.cacheWrite != null) parts.push(tokens(u.cacheWrite) + ' cache write');
+  if (u.output != null) parts.push(tokens(u.output) + ' out');
+  if (!parts.length) return '';
+  return parts.join(' · ') + (u.outputPartial ? ' (since watching)' : '');
+}
+
+/** How much of what the model read came from cache — the prompt-churn gauge. */
+export function cacheHitRate(u) {
+  if (!u || u.cacheRead == null || u.input == null) return '';
+  const denom = u.input + u.cacheRead;
+  if (!denom) return '';
+  return Math.round((u.cacheRead / denom) * 100) + '% read from cache';
+}
+
+/**
+ * Dollars per hour when the agent priced itself, output pace otherwise.
+ * Quiet under five minutes — dividing by a tiny denominator prints a huge
+ * rate that is really just startup noise — and quiet on partial sums, which
+ * would make the rate precise-looking and wrong.
+ */
+export function burnRate(u, startedAt, endedAt, now = Date.now()) {
+  if (!u || u.outputPartial || !startedAt) return '';
+  const hours = ((endedAt || now) - startedAt) / 3_600_000;
+  if (hours < 5 / 60) return '';
+  if (u.cost > 0) return money(u.cost / hours) + '/hr';
+  if (u.output > 0) return '~' + tokens(Math.round(u.output / (hours * 60))) + ' out tok/min';
+  return '';
+}
+
+/** The session's age. Unlike since(), an archive can be days wide. */
+export function span(ms) {
+  if (ms == null || ms < 0) return '';
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return '<1m';
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + 'h ' + (m % 60) + 'm';
+  return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
+}
+
+export function outPerTurn(u, turns) {
+  if (!u || !(u.output > 0) || !turns) return '';
+  return '~' + tokens(Math.round(u.output / turns)) + ' out/turn';
+}
+
 /** How long a tool took. Sub-second calls don't get one — a read that finished in
     40ms is not news, and printing it on every row buries the one that took 90s. */
 export function took(ms) {

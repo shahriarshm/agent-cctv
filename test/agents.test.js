@@ -9,7 +9,7 @@ import path from 'node:path';
 import { ChatTailer } from '../src/sources/gemini/chats.js';
 import { patchFromMeta as geminiPatch } from '../src/sources/gemini/index.js';
 import { describeArgs } from '../src/util.js';
-import { loadSqlite } from '../src/sqlite-poll.js';
+import { loadSqlite, presentColumns } from '../src/sqlite-poll.js';
 import { OpencodeSource, capabilities as opencodeCaps } from '../src/sources/opencode/index.js';
 import { HermesSource, patchFromRow as hermesPatch } from '../src/sources/hermes/index.js';
 import { listSessions, loadSession } from '../src/history.js';
@@ -118,20 +118,24 @@ test('a $set snapshot and a later append of the same message emit once', () => {
 });
 
 test('gemini usage: latest input is the context, output sums once per message', () => {
-  const gm = (id, input, output) => ({
+  const gm = (id, input, output, cached = 0) => ({
     id,
     timestamp: '2026-08-06T10:00:10Z',
     type: 'gemini',
     content: [{ text: 'ok' }],
-    tokens: { input, output, cached: 0, thoughts: 10, tool: 0, total: input + output },
+    tokens: { input, output, cached, thoughts: 10, tool: 0, total: input + output },
     model: 'gemini-3.5-flash',
   });
-  const root = writeChat([header, gm('g1', 1000, 50), gm('g1', 1000, 50), gm('g2', 2000, 70)]);
+  const root = writeChat([header, gm('g1', 1000, 50), gm('g1', 1000, 50), gm('g2', 2000, 70, 500)]);
   const { usage, model } = collectChats(root)[0].meta;
   assert.equal(model, 'gemini-3.5-flash');
   assert.equal(usage.context, 2000, 'the newest request is the whole context');
   assert.equal(usage.output, 50 + 10 + 70 + 10, 'summed once per message id, thoughts included');
   assert.equal(usage.outputPartial, false, 'read from byte zero, so the sum is a true total');
+  assert.equal(usage.input, 1000 + 1500, 'uncached input sums once per message id — cached is a subset of input');
+  assert.equal(usage.cacheRead, 500);
+  assert.equal(usage.cacheWrite, null, 'gemini records no cache-write number');
+  assert.equal(usage.cost, null);
 });
 
 test('gemini patch carries transcript facts and nothing invented', () => {
@@ -169,17 +173,25 @@ function openDb(name, ddl) {
 const OPENCODE_DDL = `
   CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT,
     model TEXT, agent TEXT, time_created INTEGER, time_updated INTEGER, time_archived INTEGER,
-    tokens_output INTEGER DEFAULT 0, tokens_reasoning INTEGER DEFAULT 0);
+    tokens_output INTEGER DEFAULT 0, tokens_reasoning INTEGER DEFAULT 0,
+    tokens_input INTEGER DEFAULT 0, tokens_cache_read INTEGER DEFAULT 0,
+    tokens_cache_write INTEGER DEFAULT 0, cost REAL DEFAULT 0);
   CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER,
     time_updated INTEGER, data TEXT);
   CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
     time_created INTEGER, time_updated INTEGER, data TEXT);
 `;
 
+test('presentColumns reports what the schema actually has', { skip: !sqlite }, () => {
+  const { db } = openDb('probe', 'CREATE TABLE t (a TEXT, b INTEGER);');
+  assert.deepEqual(presentColumns(db, 't', ['b', 'zzz', 'a']), ['b', 'a']);
+  assert.deepEqual(presentColumns(db, 't', ['nope']), []);
+});
+
 function opencodeFixture() {
   const { file, db } = openDb('opencode', OPENCODE_DDL);
-  db.prepare('INSERT INTO session (id, directory, title, model, agent, time_created, time_updated, tokens_output, tokens_reasoning) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run('ses_1', '/home/u/proj', 'Fix the tests', 'kimi-k3', 'build', NOW - 60e3, NOW - 1000, 500, 20);
+  db.prepare('INSERT INTO session (id, directory, title, model, agent, time_created, time_updated, tokens_output, tokens_reasoning, tokens_input, tokens_cache_read, tokens_cache_write, cost) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run('ses_1', '/home/u/proj', 'Fix the tests', 'kimi-k3', 'build', NOW - 60e3, NOW - 1000, 500, 20, 251_806, 900_000, 12_000, 1.84);
   // A subagent session: excluded from tiles, and its parts must not leak.
   db.prepare('INSERT INTO session (id, parent_id, directory, time_created, time_updated) VALUES (?,?,?,?,?)')
     .run('ses_child', 'ses_1', '/home/u/proj', NOW - 50e3, NOW - 1000);
@@ -225,6 +237,11 @@ test('opencode: sessions become patches, parts become events, children stay invi
   assert.equal(main.patch.state, undefined, 'no registry means no claimed state');
   assert.equal(main.patch.usage.output, 520, "opencode's own running total, reasoning included");
   assert.equal(main.patch.usage.context, 300 + 9000, 'the step-finish input, cached portion included');
+  assert.equal(main.patch.usage.input, 251_806, "opencode's input column is the uncached portion");
+  assert.equal(main.patch.usage.cacheRead, 900_000);
+  assert.equal(main.patch.usage.cacheWrite, 12_000);
+  assert.equal(main.patch.usage.cost, 1.84, 'opencode prices its own sessions; we repeat, never compute');
+  assert.equal(main.patch.usage.costEstimated, false);
   assert.equal(main.bootstrap, true);
 
   const kinds = main.events.map((e) => e.kind);
@@ -233,6 +250,23 @@ test('opencode: sessions become patches, parts become events, children stay invi
   assert.equal(start.detail, 'npm test');
   assert.equal(start.tool.category, 'exec');
   assert.ok(!main.events.some((e) => e.detail === 'subagent chatter'), "a child's parts do not leak into the parent");
+});
+
+test('opencode: a schema without the token columns is fewer stats, not a dead source', { skip: !sqlite }, () => {
+  const { file, db } = openDb('opencode-old', `
+    CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT,
+      model TEXT, agent TEXT, time_created INTEGER, time_updated INTEGER, time_archived INTEGER,
+      tokens_output INTEGER DEFAULT 0, tokens_reasoning INTEGER DEFAULT 0);
+    CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+    CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+  `);
+  db.prepare('INSERT INTO session (id, directory, time_created, time_updated, tokens_output) VALUES (?,?,?,?,?)')
+    .run('ses_old', '/home/u/p', NOW - 60e3, NOW - 1000, 42);
+  const updates = collectSqlite(new OpencodeSource({ dbPath: file }), db);
+  const u = updates.find((x) => x.sessionId === 'ses_old').patch.usage;
+  assert.equal(u.output, 42, 'what the old schema does record still flows');
+  assert.equal(u.input, null, 'what it does not is null, never zero — zero would read as a fact');
+  assert.equal(u.cost, null);
 });
 
 test('opencode: a second poll over the same rows emits nothing twice', { skip: !sqlite }, () => {
@@ -278,7 +312,10 @@ test('opencode capabilities: no database file means sqlite is not even the quest
 const HERMES_DDL = `
   CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, parent_session_id TEXT, model TEXT,
     started_at REAL, ended_at REAL, end_reason TEXT, cwd TEXT, git_branch TEXT, title TEXT,
-    output_tokens INTEGER DEFAULT 0, reasoning_tokens INTEGER DEFAULT 0);
+    output_tokens INTEGER DEFAULT 0, reasoning_tokens INTEGER DEFAULT 0,
+    input_tokens INTEGER DEFAULT 0, cache_read_tokens INTEGER DEFAULT 0,
+    cache_write_tokens INTEGER DEFAULT 0, estimated_cost_usd REAL DEFAULT 0,
+    actual_cost_usd REAL DEFAULT 0);
   CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT,
     content TEXT, tool_call_id TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL,
     reasoning_content TEXT, active INTEGER DEFAULT 1);
@@ -287,8 +324,8 @@ const HERMES_DDL = `
 function hermesFixture() {
   const { file, db } = openDb('hermes', HERMES_DDL);
   const sec = NOW / 1000;
-  db.prepare('INSERT INTO sessions (id, source, model, started_at, cwd, git_branch, title, output_tokens, reasoning_tokens) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run('h1', 'cli', 'hermes-4', sec - 60, '/home/u/proj', 'main', 'Wire the sensor', 300, 40);
+  db.prepare('INSERT INTO sessions (id, source, model, started_at, cwd, git_branch, title, output_tokens, reasoning_tokens, input_tokens, cache_read_tokens, cache_write_tokens, estimated_cost_usd, actual_cost_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run('h1', 'cli', 'hermes-4', sec - 60, '/home/u/proj', 'main', 'Wire the sensor', 300, 40, 10_900, 13_824, 0, 0.42, 0);
   // A gateway chat session: not a coding agent, not a tile.
   db.prepare('INSERT INTO sessions (id, source, started_at) VALUES (?,?,?)').run('h2', 'telegram', sec - 60);
   const msg = (ses, role, fields = {}) =>
@@ -315,6 +352,11 @@ test('hermes: cli sessions only, with tool calls paired across rows', { skip: !s
   assert.equal(main.patch.title, 'Wire the sensor');
   assert.equal(main.patch.usage.output, 340);
   assert.equal(main.patch.usage.context, null, 'cumulative input is not a context size');
+  assert.equal(main.patch.usage.input, 10_900, 'hermes input is the uncached portion — real rows show cache reads exceeding it');
+  assert.equal(main.patch.usage.cacheRead, 13_824);
+  assert.equal(main.patch.usage.cacheWrite, 0);
+  assert.equal(main.patch.usage.cost, 0.42, 'no actual figure, so the estimate — hermes says which is which');
+  assert.equal(main.patch.usage.costEstimated, true);
 
   const kinds = main.events.map((e) => e.kind);
   assert.deepEqual(kinds, ['prompt', 'tool_start', 'tool_end']);
@@ -323,6 +365,15 @@ test('hermes: cli sessions only, with tool calls paired across rows', { skip: !s
   assert.equal(start.tool.category, 'exec');
   const end = main.events.find((e) => e.kind === 'tool_end');
   assert.equal(end.tool.durationMs, 5000);
+});
+
+test('hermes cost: the measured figure beats the estimate, and zero is no figure at all', () => {
+  const row = { id: 'x', output_tokens: 10, reasoning_tokens: 0 };
+  assert.equal(hermesPatch({ ...row, actual_cost_usd: 1.5, estimated_cost_usd: 0.4 }).usage.cost, 1.5);
+  assert.equal(hermesPatch({ ...row, actual_cost_usd: 1.5, estimated_cost_usd: 0.4 }).usage.costEstimated, false);
+  assert.equal(hermesPatch({ ...row, estimated_cost_usd: 0.4 }).usage.cost, 0.4);
+  assert.equal(hermesPatch({ ...row, estimated_cost_usd: 0.4 }).usage.costEstimated, true);
+  assert.equal(hermesPatch(row).usage.cost, null, 'zero cost columns mean "not priced", not free');
 });
 
 test('hermes: a finished session says so, and a second poll repeats nothing', { skip: !sqlite }, () => {

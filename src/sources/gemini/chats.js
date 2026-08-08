@@ -77,6 +77,8 @@ export class ChatTailer extends JsonlTailer {
       seenResponses: new Set(),
       usageCounted: new Set(), // message ids whose tokens are already summed
       outputSeen: 0,
+      inputSeen: 0,
+      cacheReadSeen: 0,
     };
   }
 
@@ -116,11 +118,20 @@ export class ChatTailer extends JsonlTailer {
       if (t && typeof t.input === 'number' && !state.usageCounted.has(msg.id)) {
         state.usageCounted.add(msg.id);
         state.outputSeen += (t.output || 0) + (t.thoughts || 0);
+        // `cached` is the portion of `input` served from cache, so uncached is
+        // a subtraction here where the Claude source gets them pre-split.
+        state.inputSeen += Math.max(0, (t.input || 0) - (t.cached || 0));
+        state.cacheReadSeen += t.cached || 0;
         meta.usage = {
           context: t.input,
           contextWindow: null,
           output: state.outputSeen,
           outputPartial: !state.fromStart,
+          input: state.inputSeen,
+          cacheRead: state.cacheReadSeen,
+          cacheWrite: null,
+          cost: null,
+          costEstimated: false,
         };
       }
     }

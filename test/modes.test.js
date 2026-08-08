@@ -252,7 +252,7 @@ test('POST /api/views refuses a nameless view and an invalid one', async () => {
 
 /* ── the extracted formatters ────────────────────────────────────────────── */
 
-import { plain, since, tokens, took, shortPath } from '../public/format.js';
+import { plain, since, tokens, took, shortPath, money, costLine, tokenBreakdown, cacheHitRate, burnRate, span, outPerTurn } from '../public/format.js';
 import { foldTools } from '../public/timeline.js';
 
 test('plain strips markdown down to the words', () => {
@@ -294,6 +294,65 @@ test('shortPath collapses a home directory', () => {
   assert.equal(shortPath('/Users/me/code/x'), '~/code/x');
   assert.equal(shortPath('/home/me/code/x'), '~/code/x');
   assert.equal(shortPath(''), '');
+});
+
+test('money reads like a bill, and stays quiet about nothing', () => {
+  assert.equal(money(1.8425178), '$1.84');
+  assert.equal(money(12), '$12.00');
+  assert.equal(money(0.003), '<$0.01');
+  assert.equal(money(0), '');
+  assert.equal(money(null), '');
+});
+
+test('costLine repeats the agent figure and keeps its own est. label', () => {
+  assert.equal(costLine({ cost: 1.84, costEstimated: false }), '$1.84');
+  assert.equal(costLine({ cost: 0.42, costEstimated: true }), '$0.42 est.');
+  assert.equal(costLine({ cost: null }), '');
+  assert.equal(costLine(null), '');
+});
+
+test('tokenBreakdown shows only what the agent recorded, and owns up to partial sums', () => {
+  assert.equal(
+    tokenBreakdown({ input: 71_900, cacheRead: 1_165_568, cacheWrite: null, output: 6_947, outputPartial: false }),
+    '72k in · 1.2M cache read · 7k out'
+  );
+  assert.equal(
+    tokenBreakdown({ input: 5, cacheRead: 250_000, cacheWrite: 1_300, output: 500, outputPartial: true }),
+    '5 in · 250k cache read · 1k cache write · 500 out (since watching)'
+  );
+  assert.equal(tokenBreakdown({ output: 340, outputPartial: false, input: null, cacheRead: null, cacheWrite: null }), '340 out');
+  assert.equal(tokenBreakdown(null), '');
+});
+
+test('cacheHitRate needs both sides of the fraction', () => {
+  assert.equal(cacheHitRate({ input: 10_900, cacheRead: 13_824 }), '56% read from cache');
+  assert.equal(cacheHitRate({ input: 100, cacheRead: 0 }), '0% read from cache');
+  assert.equal(cacheHitRate({ input: null, cacheRead: 500 }), '');
+  assert.equal(cacheHitRate({ input: 0, cacheRead: 0 }), '');
+});
+
+test('burnRate: dollars when the agent priced itself, pace otherwise, silence when too young or partial', () => {
+  const HR = 3_600_000;
+  const now = Date.now();
+  assert.equal(burnRate({ cost: 3.6, output: 0, outputPartial: false }, now - 2 * HR, null, now), '$1.80/hr');
+  assert.equal(burnRate({ cost: null, output: 120_000, outputPartial: false }, now - HR, null, now), '~2k out tok/min');
+  assert.equal(burnRate({ cost: 3.6, output: 0, outputPartial: true }, now - 2 * HR, null, now), '', 'a rate built on a partial sum is precise-looking and wrong');
+  assert.equal(burnRate({ cost: 3.6, output: 0, outputPartial: false }, now - 60_000, null, now), '', 'a minute-old session has no meaningful rate');
+  assert.equal(burnRate({ cost: 9, output: 0, outputPartial: false }, now - 3 * HR, now - HR, now), '$4.50/hr', 'an archived session rates over its own life, not until now');
+});
+
+test('span is the session age, days included', () => {
+  assert.equal(span(30_000), '<1m');
+  assert.equal(span(34 * 60_000), '34m');
+  assert.equal(span((2 * 60 + 14) * 60_000), '2h 14m');
+  assert.equal(span((3 * 24 + 7) * 3_600_000), '3d 7h');
+  assert.equal(span(null), '');
+});
+
+test('outPerTurn averages output over turns', () => {
+  assert.equal(outPerTurn({ output: 26_000 }, 13), '~2k out/turn');
+  assert.equal(outPerTurn({ output: 500 }, 0), '');
+  assert.equal(outPerTurn(null, 5), '');
 });
 
 test('foldTools makes a tool call one row, and leaves an orphan result alone', () => {

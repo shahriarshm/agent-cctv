@@ -35,7 +35,7 @@ export class TranscriptTailer extends JsonlTailer {
   }
 
   initState() {
-    return { tools: new Map(), outputSeen: 0 };
+    return { tools: new Map(), outputSeen: 0, inputSeen: 0, cacheReadSeen: 0, cacheWriteSeen: 0, context: null };
   }
 
   collectMeta(meta, entry, state) {
@@ -84,21 +84,35 @@ export function cleanPrompt(text) {
  * summed — and that sum is only a true total when we read the log from its
  * start, which `fromStart` records honestly rather than pretending otherwise.
  *
- * Subagents are skipped: a sidechain request carries its own separate context,
- * and letting one land here would overwrite the main session's number with a
- * fresh subagent's.
+ * Subagents are counted in the sums and excluded from the context. A sidechain
+ * request carries its own separate context — letting one land on `context`
+ * would make a full session look like it had suddenly emptied — but its tokens
+ * are this session's work all the same, and a total that quietly dropped
+ * subagent requests would understate every session that delegated anything.
  */
 function collectUsage(meta, entry, state) {
   const u = entry.message?.usage;
-  if (!u || entry.isSidechain) return;
-  state.outputSeen = (state.outputSeen || 0) + (u.output_tokens || 0);
+  if (!u) return;
+  state.inputSeen += u.input_tokens || 0;
+  state.cacheReadSeen += u.cache_read_input_tokens || 0;
+  state.cacheWriteSeen += u.cache_creation_input_tokens || 0;
+  state.outputSeen += u.output_tokens || 0;
+  if (!entry.isSidechain) {
+    state.context =
+      (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+  }
   meta.usage = {
-    context: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0),
+    context: state.context,
     // Claude does not record the model's window anywhere in the transcript, so
     // there is no honest denominator to show a percentage against.
     contextWindow: null,
     output: state.outputSeen,
     outputPartial: !state.fromStart,
+    input: state.inputSeen,
+    cacheRead: state.cacheReadSeen,
+    cacheWrite: state.cacheWriteSeen,
+    cost: null,
+    costEstimated: false,
   };
 }
 

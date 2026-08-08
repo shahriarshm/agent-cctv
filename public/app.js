@@ -58,7 +58,7 @@ const titleEl = document.getElementById('inspector-title');
 import { sourceMeta } from './icons.js';
 import { shouldNotify, describe as describeAlert } from './notify.js';
 import { mountViews, setViews, inView, currentView, wantedViewId, wireSave } from './views.js';
-import { el, shortPath, plain, since, clockTime, tokens } from './format.js';
+import { el, shortPath, plain, since, clockTime, tokens, costLine, tokenBreakdown, cacheHitRate, burnRate, span, outPerTurn } from './format.js';
 import { createTimeline } from './timeline.js';
 import { createFocus, createTail } from './modes.js';
 
@@ -690,6 +690,9 @@ function renderInspectorMeta(s) {
   titleEl.textContent = plain(s.title) || s.name;
   const meta = sourceMeta(s.source);
   document.getElementById('inspector-mark').innerHTML = meta.icon;
+  // A live session ages until now; an archived one stopped aging when it ended.
+  const endedAt = s.historical ? s.endedAt : null;
+  const perTurn = outPerTurn(s.usage, s.stats.turns);
   const rows = [
     // A past session's "how long ago" is when it stopped, not when we read it.
     ['status', s.historical ? `archived · last active ${new Date(s.endedAt).toLocaleString()}` : `${stateLabel(s)} · ${since(s.stateSince)}`],
@@ -702,9 +705,13 @@ function renderInspectorMeta(s) {
     ['mode', s.permissionMode],
     ['claude', s.version],
     ['session', s.id],
-    ['work', `${s.stats.tools} tools · ${s.stats.turns} turns · ${s.stats.errors} failed`],
+    ['age', s.startedAt ? span((endedAt || Date.now()) - s.startedAt) : ''],
+    ['work', `${s.stats.tools} tools · ${s.stats.turns} turns · ${s.stats.errors} failed` + (perTurn ? ` · ${perTurn}` : '')],
     ['context', contextUsage(s.usage)],
-    ['output', outputUsage(s.usage)],
+    ['tokens', tokenBreakdown(s.usage)],
+    ['cache', cacheHitRate(s.usage)],
+    ['cost', costLine(s.usage)],
+    ['burn', burnRate(s.usage, s.startedAt, endedAt)],
   ].filter(([, v]) => v);
 
   metaEl.replaceChildren();
@@ -719,16 +726,6 @@ function contextUsage(u) {
   return u.contextWindow
     ? `${n} of ${u.contextWindow.toLocaleString()} (${Math.round((u.context / u.contextWindow) * 100)}%)`
     : n;
-}
-
-/**
- * Output is a sum, so say plainly when it is a partial one. A transcript picked
- * up mid-file has real tokens behind it that we never saw, and quietly showing
- * the short number as a total would be the one dishonest thing on this panel.
- */
-function outputUsage(u) {
-  if (!u || u.output == null) return null;
-  return u.output.toLocaleString() + (u.outputPartial ? ' (since watching)' : '');
 }
 
 function renderTasks(tasks) {
