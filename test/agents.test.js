@@ -173,7 +173,9 @@ function openDb(name, ddl) {
 const OPENCODE_DDL = `
   CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT,
     model TEXT, agent TEXT, time_created INTEGER, time_updated INTEGER, time_archived INTEGER,
-    tokens_output INTEGER DEFAULT 0, tokens_reasoning INTEGER DEFAULT 0);
+    tokens_output INTEGER DEFAULT 0, tokens_reasoning INTEGER DEFAULT 0,
+    tokens_input INTEGER DEFAULT 0, tokens_cache_read INTEGER DEFAULT 0,
+    tokens_cache_write INTEGER DEFAULT 0, cost REAL DEFAULT 0);
   CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER,
     time_updated INTEGER, data TEXT);
   CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
@@ -188,8 +190,8 @@ test('presentColumns reports what the schema actually has', { skip: !sqlite }, (
 
 function opencodeFixture() {
   const { file, db } = openDb('opencode', OPENCODE_DDL);
-  db.prepare('INSERT INTO session (id, directory, title, model, agent, time_created, time_updated, tokens_output, tokens_reasoning) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run('ses_1', '/home/u/proj', 'Fix the tests', 'kimi-k3', 'build', NOW - 60e3, NOW - 1000, 500, 20);
+  db.prepare('INSERT INTO session (id, directory, title, model, agent, time_created, time_updated, tokens_output, tokens_reasoning, tokens_input, tokens_cache_read, tokens_cache_write, cost) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run('ses_1', '/home/u/proj', 'Fix the tests', 'kimi-k3', 'build', NOW - 60e3, NOW - 1000, 500, 20, 251_806, 900_000, 12_000, 1.84);
   // A subagent session: excluded from tiles, and its parts must not leak.
   db.prepare('INSERT INTO session (id, parent_id, directory, time_created, time_updated) VALUES (?,?,?,?,?)')
     .run('ses_child', 'ses_1', '/home/u/proj', NOW - 50e3, NOW - 1000);
@@ -235,6 +237,11 @@ test('opencode: sessions become patches, parts become events, children stay invi
   assert.equal(main.patch.state, undefined, 'no registry means no claimed state');
   assert.equal(main.patch.usage.output, 520, "opencode's own running total, reasoning included");
   assert.equal(main.patch.usage.context, 300 + 9000, 'the step-finish input, cached portion included');
+  assert.equal(main.patch.usage.input, 251_806, "opencode's input column is the uncached portion");
+  assert.equal(main.patch.usage.cacheRead, 900_000);
+  assert.equal(main.patch.usage.cacheWrite, 12_000);
+  assert.equal(main.patch.usage.cost, 1.84, 'opencode prices its own sessions; we repeat, never compute');
+  assert.equal(main.patch.usage.costEstimated, false);
   assert.equal(main.bootstrap, true);
 
   const kinds = main.events.map((e) => e.kind);
@@ -243,6 +250,23 @@ test('opencode: sessions become patches, parts become events, children stay invi
   assert.equal(start.detail, 'npm test');
   assert.equal(start.tool.category, 'exec');
   assert.ok(!main.events.some((e) => e.detail === 'subagent chatter'), "a child's parts do not leak into the parent");
+});
+
+test('opencode: a schema without the token columns is fewer stats, not a dead source', { skip: !sqlite }, () => {
+  const { file, db } = openDb('opencode-old', `
+    CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT,
+      model TEXT, agent TEXT, time_created INTEGER, time_updated INTEGER, time_archived INTEGER,
+      tokens_output INTEGER DEFAULT 0, tokens_reasoning INTEGER DEFAULT 0);
+    CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+    CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+  `);
+  db.prepare('INSERT INTO session (id, directory, time_created, time_updated, tokens_output) VALUES (?,?,?,?,?)')
+    .run('ses_old', '/home/u/p', NOW - 60e3, NOW - 1000, 42);
+  const updates = collectSqlite(new OpencodeSource({ dbPath: file }), db);
+  const u = updates.find((x) => x.sessionId === 'ses_old').patch.usage;
+  assert.equal(u.output, 42, 'what the old schema does record still flows');
+  assert.equal(u.input, null, 'what it does not is null, never zero — zero would read as a fact');
+  assert.equal(u.cost, null);
 });
 
 test('opencode: a second poll over the same rows emits nothing twice', { skip: !sqlite }, () => {

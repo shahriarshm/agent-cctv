@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { OPENCODE_DB } from '../../paths.js';
-import { SqlitePoller, loadSqlite } from '../../sqlite-poll.js';
+import { SqlitePoller, loadSqlite, presentColumns } from '../../sqlite-poll.js';
 import { describeArgs, prose, safeJson, truncate, uid } from '../../util.js';
 
 /**
@@ -59,12 +59,26 @@ export function patchFromRow(row, { context = null, model = null } = {}) {
     // when we started reading.
     output: (row.tokens_output || 0) + (row.tokens_reasoning || 0),
     outputPartial: false,
+    input: row.tokens_input ?? null,
+    cacheRead: row.tokens_cache_read ?? null,
+    cacheWrite: row.tokens_cache_write ?? null,
+    // OpenCode prices its own sessions. Zero means "never priced" — a real
+    // $0.00 row would read as a fact about a session that has no such fact.
+    cost: row.cost > 0 ? row.cost : null,
+    costEstimated: false,
   };
   return patch;
 }
 
 export const SESSION_COLS =
   'id, directory, title, model, agent, time_created, time_updated, time_archived, tokens_output, tokens_reasoning';
+
+/** Columns newer OpenCode schemas have and older ones may not — probed, not assumed. */
+export const OPTIONAL_COLS = ['tokens_input', 'tokens_cache_read', 'tokens_cache_write', 'cost'];
+
+export function sessionCols(db) {
+  return [SESSION_COLS, ...presentColumns(db, 'session', OPTIONAL_COLS)].join(', ');
+}
 
 function baseEvent(ts, sessionId, kind) {
   return {
@@ -292,7 +306,7 @@ export class OpencodeSource extends EventEmitter {
     }
 
     const sessions = db
-      .prepare(`SELECT ${SESSION_COLS} FROM session WHERE parent_id IS NULL AND time_updated >= ?`)
+      .prepare(`SELECT ${sessionCols(db)} FROM session WHERE parent_id IS NULL AND time_updated >= ?`)
       .all(this.sessionCursor);
 
     const patched = new Set();
