@@ -38,6 +38,18 @@ export function loadSqlite() {
   return sqlite;
 }
 
+/**
+ * Which of `wanted` actually exist on `table`. These schemas belong to other
+ * teams and grow columns over time; selecting one an older install lacks
+ * would turn every poll into a throw, and the retry path would spin on it
+ * forever instead of recovering. Ask first — a missing column is a missing
+ * stat, never a dead source.
+ */
+export function presentColumns(db, table, wanted) {
+  const have = new Set(db.prepare(`PRAGMA table_info("${table}")`).all().map((r) => r.name));
+  return wanted.filter((c) => have.has(c));
+}
+
 export class SqlitePoller {
   /** @param {{dbPath: string, poll: (db: any, first: boolean) => void, pollMs?: number}} opts */
   constructor({ dbPath, poll, pollMs = POLL_MS }) {

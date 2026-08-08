@@ -9,7 +9,7 @@ import path from 'node:path';
 import { ChatTailer } from '../src/sources/gemini/chats.js';
 import { patchFromMeta as geminiPatch } from '../src/sources/gemini/index.js';
 import { describeArgs } from '../src/util.js';
-import { loadSqlite } from '../src/sqlite-poll.js';
+import { loadSqlite, presentColumns } from '../src/sqlite-poll.js';
 import { OpencodeSource, capabilities as opencodeCaps } from '../src/sources/opencode/index.js';
 import { HermesSource, patchFromRow as hermesPatch } from '../src/sources/hermes/index.js';
 import { listSessions, loadSession } from '../src/history.js';
@@ -179,6 +179,12 @@ const OPENCODE_DDL = `
   CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,
     time_created INTEGER, time_updated INTEGER, data TEXT);
 `;
+
+test('presentColumns reports what the schema actually has', { skip: !sqlite }, () => {
+  const { db } = openDb('probe', 'CREATE TABLE t (a TEXT, b INTEGER);');
+  assert.deepEqual(presentColumns(db, 't', ['b', 'zzz', 'a']), ['b', 'a']);
+  assert.deepEqual(presentColumns(db, 't', ['nope']), []);
+});
 
 function opencodeFixture() {
   const { file, db } = openDb('opencode', OPENCODE_DDL);
