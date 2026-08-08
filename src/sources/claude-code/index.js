@@ -182,8 +182,8 @@ export class ClaudeCodeSource extends EventEmitter {
 }
 
 /**
- * Claude's status vocabulary is {busy, idle, waiting}; ours adds `ended` for
- * processes that are gone. `waiting` splits in the UI by `waitingFor`, because
+ * Claude's status vocabulary is {busy, idle, waiting, shell}; ours adds `ended`
+ * for processes that are gone. `waiting` splits in the UI by `waitingFor`, because
  * "permission prompt" is an interrupt and "input needed" is just a finished turn.
  */
 function mapState(rec) {
@@ -195,6 +195,9 @@ function mapState(rec) {
       return 'waiting';
     case 'idle':
       return 'idle';
+    case 'shell':
+      // The user's `!` command running inside the session — work, not idleness.
+      return 'busy';
     default:
       return 'unknown';
   }

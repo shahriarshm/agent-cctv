@@ -9,8 +9,8 @@ import { safeJson } from '../../util.js';
  * Claude Code maintains ~/.claude/sessions/<pid>.json for every running CLI, and
  * rewrites it on every status transition. That file is the authoritative answer
  * to "which agents are alive and what are they doing" — pid, cwd, sessionId, a
- * derived display name, and status ∈ {busy, idle, waiting} with a `waitingFor`
- * reason for permission and input prompts.
+ * derived display name, and status ∈ {busy, idle, waiting, shell} with a
+ * `waitingFor` reason for permission and input prompts.
  *
  * This is undocumented internal state, so `available()` capability-checks it and
  * the rest of the app degrades to transcript-only inference when it's missing.
@@ -26,13 +26,32 @@ export function available(dir = CLAUDE_SESSIONS) {
   }
 }
 
-/** `ps` start time for a pid, used to catch pid reuse after a session dies. */
-function procStartOf(pid) {
+function lstartOf(pid, env) {
   return new Promise((resolve) => {
-    execFile('ps', ['-p', String(pid), '-o', 'lstart='], { timeout: 2000 }, (err, stdout) => {
+    execFile('ps', ['-p', String(pid), '-o', 'lstart='], { timeout: 2000, env }, (err, stdout) => {
       resolve(err ? null : stdout.trim() || null);
     });
   });
+}
+
+/**
+ * `ps` start time for a pid, used to catch pid reuse after a session dies.
+ * Rendered twice — local time and UTC — because Claude Code writes `procStart`
+ * in UTC while a plain `ps` renders lstart in the machine's timezone. Comparing
+ * against a single rendering condemned every live session as pid-reused on any
+ * machine not at UTC, and the whole wall read NO SIGNAL seconds after start.
+ */
+function procStartOf(pid) {
+  return Promise.all([lstartOf(pid), lstartOf(pid, { ...process.env, TZ: 'UTC' })]).then(
+    ([local, utc]) => ({ local, utc })
+  );
+}
+
+/** The recorded start disproves the binding only if it matches *neither* rendering. */
+export function procStartMatches(recorded, starts) {
+  if (!recorded) return true;
+  const seen = [starts?.local, starts?.utc].filter(Boolean);
+  return seen.length === 0 || seen.includes(recorded);
 }
 
 function pidExists(pid) {
@@ -97,8 +116,8 @@ export class SessionRegistry extends EventEmitter {
       // pid. Confirm the recorded start time once before trusting the binding.
       if (alive && rec.procStart && !this.verifiedPids.has(pid)) {
         this.verifiedPids.set(pid, 'pending');
-        procStartOf(pid).then((actual) => {
-          const ok = !actual || !rec.procStart || actual === rec.procStart;
+        procStartOf(pid).then((starts) => {
+          const ok = procStartMatches(rec.procStart, starts);
           this.verifiedPids.set(pid, ok);
           if (!ok) this.emit('gone', { pid, sessionId: rec.sessionId, reason: 'pid-reused' });
         });

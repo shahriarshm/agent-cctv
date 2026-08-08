@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 
 import { describeTool, toolVerb, prettyToolName, toolCategory } from '../src/sources/claude-code/describe.js';
 import { TranscriptTailer, cleanPrompt } from '../src/sources/claude-code/transcript.js';
@@ -10,6 +11,7 @@ import { Store, serialize } from '../src/store.js';
 import { fromHook } from '../src/sources/claude-code/hooks.js';
 import * as installer from '../src/install.js';
 import { projectSlug, ClaudeCodeSource } from '../src/sources/claude-code/index.js';
+import { procStartMatches } from '../src/sources/claude-code/registry.js';
 import { prose } from '../src/util.js';
 import { shouldNotify, describe as describeAlert } from '../public/notify.js';
 import { RolloutTailer } from '../src/sources/codex/rollout.js';
@@ -309,6 +311,94 @@ test('a registry file vanishing retires the session, urgency included', () => {
   assert.equal(store.get('gone-1').state, 'ended');
   assert.equal(store.get('gone-1').endedReason, 'file-removed');
   assert.equal(serialize(store.get('gone-1')).urgent, false);
+});
+
+test('a procStart recorded in UTC is not condemned as pid reuse', async () => {
+  // Claude Code writes procStart in UTC; ps renders lstart in the local
+  // timezone. On any machine not at UTC, exact string equality declared every
+  // live session pid-reused and the whole wall went NO SIGNAL seconds after
+  // start. Same trick as the bug: record our own pid's start the way Claude
+  // Code would, and check the verifier still believes in us.
+  const utcStart = await new Promise((resolve) => {
+    execFile(
+      'ps',
+      ['-p', String(process.pid), '-o', 'lstart='],
+      { env: { ...process.env, TZ: 'UTC' }, timeout: 2000 },
+      (err, out) => resolve(err ? null : out.trim())
+    );
+  });
+  assert.ok(utcStart, 'ps must render our own start time');
+
+  const sessionsDir = tmpdir('sessions');
+  const src = new ClaudeCodeSource({ projectsRoot: tmpdir('projects'), sessionsDir });
+  src.caps = { ...src.caps, registry: true, tasks: false };
+  const store = new Store();
+  src.on('update', (u) => store.apply(u));
+  src.start();
+
+  fs.writeFileSync(
+    path.join(sessionsDir, `${process.pid}.json`),
+    JSON.stringify({ sessionId: 'tz-1', cwd: '/tmp/p', status: 'busy', procStart: utcStart })
+  );
+  src.registry.poll();
+  for (let i = 0; i < 100 && src.registry.verifiedPids.get(process.pid) === 'pending'; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  src.stop();
+
+  assert.equal(src.registry.verifiedPids.get(process.pid), true, 'the binding is verified');
+  assert.equal(store.get('tz-1').state, 'busy', 'the session keeps its real state');
+});
+
+test('procStartMatches accepts either timezone rendering and nothing less', () => {
+  const starts = { local: 'Sat Aug  8 13:13:39 2026', utc: 'Sat Aug  8 09:43:39 2026' };
+  assert.equal(procStartMatches('Sat Aug  8 09:43:39 2026', starts), true, 'UTC-recorded');
+  assert.equal(procStartMatches('Sat Aug  8 13:13:39 2026', starts), true, 'local-recorded');
+  assert.equal(procStartMatches('Wed Aug  5 07:02:33 2026', starts), false, 'different process');
+  assert.equal(procStartMatches(null, starts), true, 'nothing recorded, nothing to disprove');
+  assert.equal(procStartMatches('Sat Aug  8 09:43:39 2026', { local: null, utc: null }), true, 'ps failing is not proof of reuse');
+});
+
+test('a genuinely reused pid is still caught', async () => {
+  const sessionsDir = tmpdir('sessions');
+  const src = new ClaudeCodeSource({ projectsRoot: tmpdir('projects'), sessionsDir });
+  src.caps = { ...src.caps, registry: true, tasks: false };
+  const store = new Store();
+  src.on('update', (u) => store.apply(u));
+  src.start();
+
+  fs.writeFileSync(
+    path.join(sessionsDir, `${process.pid}.json`),
+    JSON.stringify({ sessionId: 'reuse-1', cwd: '/tmp/p', status: 'busy', procStart: 'Wed Jan  1 00:00:00 2020' })
+  );
+  src.registry.poll();
+  for (let i = 0; i < 100 && src.registry.verifiedPids.get(process.pid) === 'pending'; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  src.stop();
+
+  assert.equal(store.get('reuse-1').state, 'ended');
+  assert.equal(store.get('reuse-1').endedReason, 'pid-reused');
+});
+
+test('a shell status shows as working, not unknown', () => {
+  // status: "shell" is Claude Code running the user's `!` command — activity,
+  // and newer than mapState's vocabulary was.
+  const sessionsDir = tmpdir('sessions');
+  const src = new ClaudeCodeSource({ projectsRoot: tmpdir('projects'), sessionsDir });
+  src.caps = { ...src.caps, registry: true, tasks: false };
+  const store = new Store();
+  src.on('update', (u) => store.apply(u));
+  src.start();
+
+  fs.writeFileSync(
+    path.join(sessionsDir, `${process.pid}.json`),
+    JSON.stringify({ sessionId: 'sh-1', cwd: '/tmp/p', status: 'shell' })
+  );
+  src.registry.poll();
+  src.stop();
+
+  assert.equal(store.get('sh-1').state, 'busy');
 });
 
 test('ended sessions leave the wall once they are stale', () => {
