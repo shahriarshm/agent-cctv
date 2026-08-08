@@ -246,15 +246,23 @@ The arithmetic is worth stating, because the obvious version is wrong:
 - **Output is summed**, because it genuinely is incremental — and the inspector
   says "(since watching)" when the transcript was joined mid-file, rather than
   passing a partial sum off as a total.
-- **Subagent requests are skipped.** A sidechain carries its own separate
-  context; letting one land would make a full session look like it had emptied.
-- **The two agents count differently.** Codex's `input_tokens` already includes
-  its cached portion and it keeps its own running total, so its numbers are
-  exact and need no summing. Each source does its own arithmetic.
+- **Subagent requests are skipped for context, counted in the sums.** A
+  sidechain carries its own separate context; letting one land would make a
+  full session look like it had emptied. But its tokens are the session's work,
+  so the billed totals keep them.
+- **Each agent counts differently.** Codex's `input_tokens` already includes
+  its cached portion and it keeps its own running total; OpenCode and Hermes
+  hand over running totals from their databases. Each source does its own
+  arithmetic.
 
-There is no dollar figure. It would need a per-model price table that goes stale
-silently, and it is meaningless on a subscription — a wrong number that looks
-authoritative is worse than no number.
+A dollar figure appears only when the agent itself keeps one — OpenCode prices
+its sessions and Hermes records an estimate and, when it has one, a measured
+figure (labelled `est.` when it is the estimate). The wall never computes cost
+from a price table of its own: that table goes stale silently, and it is
+meaningless on a subscription — a wrong number that looks authoritative is
+worse than no number. The inspector also derives what the sums support: the
+billed-token breakdown, how much of the input came from cache, the burn rate,
+and the session's age.
 
 ### Alerts
 
