@@ -403,9 +403,11 @@ exercised with fake envelopes and real sockets.
   fact 5). If a future build serializes them, armed mode starts costing the local
   operator waiting time — the auto-disarm and the loud armed banner bound the damage
   until we notice.
-- **The deny reason's exact output field is unverified** (allow was spike-tested; deny
-  was not). The implementation verifies it first, TDD-style; worst case deny falls
-  back to the same fall-through as silence, which is safe.
+- ~~The deny reason's exact output field is unverified~~ **Verified during
+  implementation** (2026-08-09, Claude Code 2.1.226, real interactive session):
+  `decision: {behavior: "deny", message: "..."}` denies the call, the TUI
+  prints *Denied by PermissionRequest hook*, and the model receives the
+  template message verbatim.
 - **Subagent tool calls fire hooks too.** A Task-spawned `Bash` that would prompt also
   detours while armed. Accepted: it would have prompted at the terminal anyway.
 - **No alert reaches a closed browser.** v1 requires the wall open in a tab; that is a
