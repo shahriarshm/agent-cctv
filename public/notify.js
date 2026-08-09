@@ -46,3 +46,27 @@ export function describe(s) {
     tag: `cctv:${s.id}`,
   };
 }
+
+/**
+ * Alert on a pending approval the previous state did not have. Same edge
+ * discipline as shouldNotify: ids, not counts, so a resolve+new in one frame
+ * still alerts and a repaint never does.
+ */
+export function newPendings(prev, next) {
+  const seen = new Set((prev || []).map((p) => p.id));
+  return (next || []).filter((p) => !seen.has(p.id));
+}
+
+/**
+ * Same privacy rule as describe(): tool INPUT is command lines and file
+ * contents, and a notification outlives the dashboard's token gate on the
+ * lock screen. Which tool, which project — enough to decide to look.
+ */
+export function describeApproval(p) {
+  const where = p.cwd ? p.cwd.split('/').filter(Boolean).pop() : '';
+  return {
+    title: 'Approval needed',
+    body: `${p.toolName}${where ? ' · ' + where : ''}`,
+    tag: `cctv:approval:${p.id}`,
+  };
+}

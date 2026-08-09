@@ -104,6 +104,56 @@ test('pairing: the code expires by TTL and a new mint replaces the old code', ()
   assert.equal(b.tryPair(second).ok, true);
 });
 
+/* ── the DOM-free card logic (public/approvals.js) ────────────────────── */
+
+test('revealInvisibles makes bidi overrides and controls visible and counts them', async () => {
+  const { revealInvisibles } = await import('../public/approvals.js');
+  const sneaky = 'echo ‮txt.hsab‬';
+  const r = revealInvisibles(sneaky);
+  assert.equal(r.count, 2);
+  assert.ok(r.text.includes('⟨U+202E⟩'), 'the override must be spelled out, not rendered');
+  assert.ok(!/[‪-‮]/.test(r.text));
+  assert.deepEqual(revealInvisibles('plain text'), { text: 'plain text', count: 0 });
+  // Newlines and tabs are formatting, not tricks.
+  assert.equal(revealInvisibles('a\n\tb').count, 0);
+});
+
+test('inputRows shows the full payload for the tools people actually approve', async () => {
+  const { inputRows } = await import('../public/approvals.js');
+  assert.deepEqual(inputRows('Bash', { command: 'rm -rf build', description: 'clean' }), [
+    ['command', 'rm -rf build'],
+    ['description', 'clean'],
+  ]);
+  assert.deepEqual(inputRows('Write', { file_path: '/a/b.js', content: 'x = 1' }), [
+    ['file', '/a/b.js'],
+    ['content', 'x = 1'],
+  ]);
+  assert.deepEqual(inputRows('Edit', { file_path: '/a/b.js', old_string: 'a', new_string: 'b' }), [
+    ['file', '/a/b.js'],
+    ['old', 'a'],
+    ['new', 'b'],
+  ]);
+  // Unknown tools (mcp__*) fall back to the whole input, pretty-printed.
+  const rows = inputRows('mcp__github__push', { repo: 'x' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0][0], 'input');
+  assert.ok(rows[0][1].includes('"repo": "x"'));
+});
+
+test('inputBytes and fmtBytes tell the truth about size', async () => {
+  const { inputBytes, fmtBytes } = await import('../public/approvals.js');
+  assert.equal(inputBytes({ command: 'ls' }), JSON.stringify({ command: 'ls' }).length);
+  assert.equal(fmtBytes(17), '17 B');
+  assert.equal(fmtBytes(4096), '4.0 KB');
+  assert.equal(fmtBytes(1536), '1.5 KB');
+});
+
+test('secondsLeft clamps at zero', async () => {
+  const { secondsLeft } = await import('../public/approvals.js');
+  assert.equal(secondsLeft(1000, 0), 1);
+  assert.equal(secondsLeft(0, 5000), 0);
+});
+
 test('state() is the single serializable truth the SSE layer ships', () => {
   const a = createApprovals();
   assert.deepEqual(a.state(), { armed: false, until: null, pendings: [] });

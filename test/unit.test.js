@@ -13,7 +13,7 @@ import * as installer from '../src/install.js';
 import { projectSlug, ClaudeCodeSource } from '../src/sources/claude-code/index.js';
 import { procStartMatches } from '../src/sources/claude-code/registry.js';
 import { prose } from '../src/util.js';
-import { shouldNotify, describe as describeAlert } from '../public/notify.js';
+import { shouldNotify, describe as describeAlert, newPendings, describeApproval } from '../public/notify.js';
 import { RolloutTailer } from '../src/sources/codex/rollout.js';
 import { describeCall } from '../src/sources/codex/describe.js';
 import { capabilities as codexCapabilities } from '../src/sources/codex/index.js';
@@ -838,6 +838,29 @@ test('a missing settings file is created rather than erroring', () => {
   const file = path.join(dir, 'settings.json');
   installer.install({ file });
   assert.ok(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.SessionStart);
+});
+
+test('newPendings alerts only on ids not seen before', () => {
+  const a = { id: 'p1', toolName: 'Bash' };
+  const b = { id: 'p2', toolName: 'Write' };
+  assert.deepEqual(newPendings([], [a, b]), [a, b]);
+  assert.deepEqual(newPendings([a], [a, b]), [b]);
+  assert.deepEqual(newPendings([a, b], [a, b]), []);
+  assert.deepEqual(newPendings(undefined, [a]), [a], 'first state counts as all-new');
+});
+
+test('describeApproval never leaks tool input into a lock-screen notification', () => {
+  const d = describeApproval({
+    id: 'p1',
+    toolName: 'Bash',
+    toolInput: { command: 'secret-cmd --password hunter2' },
+    cwd: '/home/me/proj',
+  });
+  assert.equal(d.title, 'Approval needed');
+  assert.ok(d.body.includes('Bash'));
+  assert.ok(d.body.includes('proj'));
+  assert.ok(!JSON.stringify(d).includes('hunter2'), 'input content is banned from notifications');
+  assert.equal(d.tag, 'cctv:approval:p1');
 });
 
 test('installApprovals writes one PermissionRequest entry with its own timeout', () => {
