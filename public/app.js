@@ -56,7 +56,8 @@ const tasksEl = document.getElementById('inspector-tasks');
 const titleEl = document.getElementById('inspector-title');
 
 import { sourceMeta } from './icons.js';
-import { shouldNotify, describe as describeAlert } from './notify.js';
+import { shouldNotify, describe as describeAlert, newPendings, describeApproval } from './notify.js';
+import { revealInvisibles, inputRows, inputBytes, fmtBytes, secondsLeft } from './approvals.js';
 import { mountViews, setViews, inView, currentView, wantedViewId, wireSave } from './views.js';
 import { el, shortPath, plain, since, clockTime, tokens, costLine, tokenBreakdown, cacheHitRate, burnRate, span, outPerTurn } from './format.js';
 import { createTimeline } from './timeline.js';
@@ -189,14 +190,18 @@ function buildTile(s) {
 
   const strip = el('div', 'strip');
 
+  // Approval cards queue here — a queue, not a slot, because parallel tool
+  // calls mean several concurrent pendings on one session.
+  const approvalsBox = el('div', 'approvals');
+
   const foot = el('div', 'tile-foot');
   const where = el('div', 'where');
   const counts = el('div', 'counts');
   foot.append(where, counts);
 
-  tile.append(head, body, strip, foot);
+  tile.append(head, body, strip, approvalsBox, foot);
 
-  tile._refs = { mark, name, tag, tagWord, tagDur, title, doing, verb, arg, says, strip, where, counts };
+  tile._refs = { mark, name, tag, tagWord, tagDur, title, doing, verb, arg, says, strip, where, counts, approvalsBox };
   tile._ticks = new Set();
 
   const open = () => openInspector(s.id);
@@ -324,6 +329,9 @@ function upsert(s) {
     tile = buildTile(s);
     tiles.set(s.id, tile);
     wall.append(tile);
+    // A pending can outrun its session's first paint (the hook fires the
+    // moment the prompt would); a late tile has to collect its cards.
+    renderTileApprovals(tile, s.id);
   }
   paintTile(tile, s);
   layout();
@@ -400,6 +408,189 @@ function dismissAlert(id) {
     note.close();
   } catch {}
 }
+
+/* ── remote approvals ──────────────────────────────────────────────────── */
+
+/*
+  The server is the authority on everything here: whether this device may
+  act, whether the wall is armed, what is pending. The UI never checks a
+  capability client-side — buttons always render, a tap that lacks the act
+  cookie answers 403, and the 403 opens the pairing dialog. A 200 and a 409
+  both end in an `approvals` frame repainting the queue, which is the
+  socket-bound design paying off: there is no client state to reconcile.
+*/
+
+let approvalsState = { armed: false, until: null, pendings: [] };
+const armedBtn = document.getElementById('armed');
+const pairDialog = document.getElementById('pair-dialog');
+const pairForm = document.getElementById('pair-form');
+const pairCodeEl = document.getElementById('pair-code');
+const pairError = document.getElementById('pair-error');
+
+function openPairDialog() {
+  pairError.hidden = true;
+  pairCodeEl.value = '';
+  pairDialog.showModal();
+  pairCodeEl.focus();
+}
+
+async function decide(id, behavior) {
+  try {
+    const res = await fetch(api(`/api/approvals/${id}/decision`), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ behavior }),
+    });
+    if (res.status === 403) {
+      document.body.dataset.unpaired = 'true';
+      openPairDialog();
+    }
+  } catch {}
+}
+
+function buildApprovalCard(p) {
+  const card = el('div', 'approval');
+  card.dataset.id = p.id;
+  card.dataset.deadline = String(p.deadline);
+
+  const head = el('div', 'approval-head');
+  head.textContent = `${p.toolName} wants to run · ${p.permissionMode || 'default'}`;
+  card.append(head);
+
+  let flagged = 0;
+  for (const [label, value] of inputRows(p.toolName, p.toolInput)) {
+    const row = el('div', 'approval-row');
+    const k = el('span', 'approval-k');
+    k.textContent = label;
+    const v = el('pre', 'approval-v');
+    const revealed = revealInvisibles(value);
+    flagged += revealed.count;
+    v.textContent = revealed.text; // full, untruncated; CSS scrolls, never clips
+    row.append(k, v);
+    card.append(row);
+  }
+
+  const meta = el('div', 'approval-meta');
+  meta.textContent =
+    fmtBytes(inputBytes(p.toolInput)) +
+    (flagged ? ` · ⚠ ${flagged} hidden character(s) revealed` : '') +
+    ' · ';
+  const clock = el('span', 'approval-clock');
+  meta.append(clock);
+  card.append(meta);
+
+  const hint = el('div', 'approval-hint');
+  hint.textContent = 'Viewing only — pair this device to act';
+  card.append(hint);
+
+  const acts = el('div', 'approval-acts');
+  const deny = el('button', 'approval-deny');
+  deny.type = 'button';
+  deny.textContent = 'Deny';
+  deny.addEventListener('click', (e) => {
+    e.stopPropagation(); // the tile underneath opens the inspector on click
+    decide(p.id, 'deny');
+  });
+  const allow = el('button', 'approval-allow');
+  allow.type = 'button';
+  allow.textContent = 'Allow';
+  allow.addEventListener('click', (e) => {
+    e.stopPropagation();
+    decide(p.id, 'allow');
+  });
+  acts.append(deny, allow);
+  card.append(acts);
+  return card;
+}
+
+function renderTileApprovals(tile, sessionId) {
+  const box = tile._refs.approvalsBox;
+  const mine = approvalsState.pendings.filter((p) => p.sessionId === sessionId);
+  const want = new Set(mine.map((p) => p.id));
+  for (const node of [...box.children]) if (!want.has(node.dataset.id)) node.remove();
+  const have = new Set([...box.children].map((n) => n.dataset.id));
+  for (const p of mine) if (!have.has(p.id)) box.append(buildApprovalCard(p));
+  tickApprovals();
+}
+
+let approvalTick = null;
+function tickApprovals() {
+  for (const tile of tiles.values()) {
+    for (const card of tile._refs.approvalsBox.children) {
+      const left = secondsLeft(Number(card.dataset.deadline));
+      const clock = card.querySelector('.approval-clock');
+      if (clock) clock.textContent = left > 0 ? `${left}s to terminal fallback` : 'falling back to the terminal';
+    }
+  }
+}
+
+function applyApprovals(next) {
+  if (!next) return;
+  // Alert on the pendings this state has and the last one did not — except on
+  // the wall's arrival, same suppression rule the session alerts follow.
+  if (booted && filters.notify && canAlert()) {
+    for (const p of newPendings(approvalsState.pendings, next.pendings)) {
+      const { title, body, tag } = describeApproval(p);
+      try {
+        const note = new Notification(title, { body, tag });
+        note.onclick = () => {
+          window.focus();
+          note.close();
+        };
+      } catch {}
+    }
+  }
+  approvalsState = next;
+  armedBtn.dataset.state = next.armed ? 'on' : 'off';
+  armedBtn.setAttribute('aria-pressed', String(!!next.armed));
+  armedBtn.title = next.armed
+    ? 'Remote approvals armed — tap to disarm'
+    : 'Remote approvals off — tap to arm';
+  for (const [id, tile] of tiles) renderTileApprovals(tile, id);
+  if (next.pendings.length && !approvalTick) approvalTick = setInterval(tickApprovals, 1000);
+  if (!next.pendings.length && approvalTick) {
+    clearInterval(approvalTick);
+    approvalTick = null;
+  }
+}
+
+armedBtn.addEventListener('click', async () => {
+  try {
+    const res = await fetch(api('/api/approvals/armed'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ on: !approvalsState.armed }),
+    });
+    if (res.status === 403) {
+      document.body.dataset.unpaired = 'true';
+      openPairDialog();
+    }
+  } catch {}
+});
+
+document.getElementById('pair-cancel').addEventListener('click', () => pairDialog.close());
+
+pairForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const res = await fetch(api('/api/pair'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ code: pairCodeEl.value.trim() }),
+    });
+    if (res.ok) {
+      document.body.dataset.unpaired = 'false';
+      pairDialog.close();
+    } else {
+      pairError.hidden = false;
+    }
+  } catch {
+    pairError.hidden = false;
+  }
+});
 
 function buildGroup() {
   const section = el('section', 'group');
@@ -1344,8 +1535,10 @@ function connect() {
   es.addEventListener('snapshot', (e) => {
     const data = JSON.parse(e.data);
     // Every snapshot, not just the first: a reconnect may be to a server whose
-    // tunnel opened or closed while the stream was down.
+    // tunnel opened or closed — or whose approvals armed, drained, or restarted
+    // away every pairing — while the stream was down.
     setTunnel(data.tunnel);
+    applyApprovals(data.approvals);
     for (const id of [...sessions.keys()]) {
       if (!data.sessions.some((s) => s.id === id)) remove(id);
     }
@@ -1377,6 +1570,8 @@ function connect() {
   es.addEventListener('removed', (e) => remove(JSON.parse(e.data).id));
 
   es.addEventListener('tunnel', (e) => setTunnel(JSON.parse(e.data)));
+
+  es.addEventListener('approvals', (e) => applyApprovals(JSON.parse(e.data)));
 
   es.addEventListener('views', (e) => {
     const before = currentView().id;
