@@ -90,10 +90,19 @@ export function tokenBreakdown(u) {
   return parts.join(' · ') + (u.outputPartial ? ' (since watching)' : '');
 }
 
-/** How much of what the model read came from cache — the prompt-churn gauge. */
+/**
+ * How much of what the model read came from cache — the prompt-churn gauge.
+ *
+ * Cache writes belong in the denominator: they are exactly the tokens that
+ * were read fresh, and on Anthropic-style accounting they carry nearly all of
+ * it — `input` is only the sliver neither read nor written, a few tokens per
+ * request. Without them every session rounded to 100% and churn was invisible.
+ * A null cacheWrite (Gemini, Codex) means the agent folds everything uncached
+ * into `input` already, so it counts as zero rather than poisoning the sum.
+ */
 export function cacheHitRate(u) {
   if (!u || u.cacheRead == null || u.input == null) return '';
-  const denom = u.input + u.cacheRead;
+  const denom = u.input + u.cacheRead + (u.cacheWrite || 0);
   if (!denom) return '';
   return Math.round((u.cacheRead / denom) * 100) + '% read from cache';
 }
