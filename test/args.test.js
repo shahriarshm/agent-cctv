@@ -54,3 +54,12 @@ test('a value flag never swallows one of our own flags', () => {
   // …but a token that is not ours is a value, dash or no dash.
   assert.equal(parseArgs(['--tunnel-args', '--region']).flags['tunnel-args'], '--region');
 });
+
+test('--approvals is a boolean flag and does not eat the subcommand', () => {
+  const args = parseArgs(['install', '--approvals']);
+  assert.deepEqual(args._, ['install']);
+  assert.equal(args.flags.approvals, true);
+  const reversed = parseArgs(['--approvals', 'install']);
+  assert.deepEqual(reversed._, ['install']);
+  assert.equal(reversed.flags.approvals, true);
+});
