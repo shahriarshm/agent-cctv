@@ -5,6 +5,7 @@ import { CLAUDE_PROJECTS, CLAUDE_SESSIONS, CLAUDE_TASKS } from '../../paths.js';
 import { SessionRegistry, available as registryAvailable } from './registry.js';
 import { TranscriptTailer } from './transcript.js';
 import { readTasks, summarizeTasks, available as tasksAvailable } from './tasks.js';
+import { approvalsInstalled } from '../../install.js';
 
 export const SOURCE = 'claude-code';
 
@@ -51,6 +52,10 @@ export function capabilities() {
     // Claude records *why* a session is waiting, so it can raise the wall's
     // urgent signal. Not every agent can.
     urgency: true,
+    // Remote approvals are wired only when the operator opted in with
+    // `agent-cctv install --approvals` — the wall's honesty about which
+    // tiles can grow buttons starts here.
+    approvals: approvalsInstalled(),
   };
 }
 

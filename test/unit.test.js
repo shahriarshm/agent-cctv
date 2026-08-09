@@ -840,6 +840,53 @@ test('a missing settings file is created rather than erroring', () => {
   assert.ok(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.SessionStart);
 });
 
+test('installApprovals writes one PermissionRequest entry with its own timeout', () => {
+  const dir = tmpdir('approvals-install');
+  const file = path.join(dir, 'settings.json');
+  installer.installApprovals({ file });
+  installer.installApprovals({ file }); // twice must not duplicate
+  const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const groups = settings.hooks.PermissionRequest;
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].matcher, '*');
+  assert.equal(groups[0].hooks.length, 1);
+  assert.equal(groups[0].hooks[0].timeout, 300, 'the 5s enrichment timeout must not leak in');
+  assert.match(groups[0].hooks[0].command, /approve-hook\.js/);
+  assert.equal(installer.approvalsInstalled({ file }), true);
+  assert.equal(installer.status({ file }).approvals, true);
+
+  // Plain install() must not add it, and uninstall() must remove it.
+  const plain = path.join(dir, 'plain.json');
+  installer.install({ file: plain });
+  assert.equal(installer.approvalsInstalled({ file: plain }), false);
+  installer.uninstall({ file });
+  assert.equal(installer.approvalsInstalled({ file }), false);
+  assert.equal(
+    JSON.parse(fs.readFileSync(file, 'utf8')).hooks?.PermissionRequest,
+    undefined,
+    'the emptied group must not linger'
+  );
+});
+
+test('claudeVersionOk enforces the spike-verified floor', () => {
+  assert.equal(installer.MIN_CLAUDE_VERSION, '2.1.226');
+  assert.equal(installer.claudeVersionOk('2.1.226 (Claude Code)'), true);
+  assert.equal(installer.claudeVersionOk('2.1.227'), true);
+  assert.equal(installer.claudeVersionOk('2.2.0'), true);
+  assert.equal(installer.claudeVersionOk('3.0.0'), true);
+  assert.equal(installer.claudeVersionOk('2.1.225'), false);
+  assert.equal(installer.claudeVersionOk('2.0.999'), false);
+  assert.equal(installer.claudeVersionOk('1.9.9'), false);
+  assert.equal(installer.claudeVersionOk(''), false);
+  assert.equal(installer.claudeVersionOk(null), false);
+  assert.equal(installer.claudeVersionOk('no digits here'), false);
+});
+
+test('capabilities() reports whether the approvals hook is installed', async () => {
+  const { capabilities } = await import('../src/sources/claude-code/index.js');
+  assert.equal(typeof capabilities().approvals, 'boolean');
+});
+
 /* ── misc ──────────────────────────────────────────────────────────────── */
 
 test('project slug matches how Claude Code names transcript directories', () => {
