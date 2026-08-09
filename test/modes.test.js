@@ -324,8 +324,19 @@ test('tokenBreakdown shows only what the agent recorded, and owns up to partial 
   assert.equal(tokenBreakdown(null), '');
 });
 
-test('cacheHitRate needs both sides of the fraction', () => {
-  assert.equal(cacheHitRate({ input: 10_900, cacheRead: 13_824 }), '56% read from cache');
+test('cacheHitRate counts cache writes as uncached reading', () => {
+  // Anthropic-style accounting: `input` is only the sliver that was neither
+  // read from cache nor written into it — fresh context lands in cacheWrite.
+  // A denominator of input + cacheRead is therefore ≈ cacheRead, which pinned
+  // the readout at 100% for every real session. The figures here are from real
+  // transcripts; the churny session reads 84%, not 100%.
+  assert.equal(cacheHitRate({ input: 36, cacheRead: 829_478, cacheWrite: 155_782 }), '84% read from cache');
+  assert.equal(cacheHitRate({ input: 1_715, cacheRead: 161_464_379, cacheWrite: 1_644_807 }), '99% read from cache');
+  assert.equal(
+    cacheHitRate({ input: 10_900, cacheRead: 13_824, cacheWrite: null }),
+    '56% read from cache',
+    'no write figure (Gemini, Codex fold everything uncached into input) is zero, not a poisoned sum'
+  );
   assert.equal(cacheHitRate({ input: 100, cacheRead: 0 }), '0% read from cache');
   assert.equal(cacheHitRate({ input: null, cacheRead: 500 }), '');
   assert.equal(cacheHitRate({ input: 0, cacheRead: 0 }), '');
