@@ -95,6 +95,15 @@ HttpOnly cookie once, so it stops appearing in the SSE URL and can be scrubbed
 from the address bar. **`/api/views` (POST) is the only endpoint that writes
 anything a person reads back** — see `writeView()`.
 
+Three credential classes, not two: `/api/health` is open, the token *views*,
+and the `cctv-act` pairing cookie *acts* (approve/deny/arm). The act secret
+travels only as a cookie — never query, never header — and lives in server
+memory beside the armed bit (`src/approvals.js`), so a restart revokes every
+pairing. A pending approval is the hook's own held HTTP response, never stored
+state: the decision endpoint resolves that socket, and a closed socket *is*
+the expiry. Do not "improve" this into a queue on disk — replay, stale
+approvals, and allow-vs-timeout races all come back with it.
+
 ### Tunnels (`src/tunnel.js`)
 
 `--tunnel` spawns a provider binary the operator already installed and scrapes
@@ -176,6 +185,12 @@ a 4 KB one. Opening one replays it through the same tailer and a throwaway
   (backs up first, writes atomically, only removes entries it added, refuses a
   file it can't parse). The paths it reads are undocumented Claude Code / Codex
   internals — keep every reference behind a source adapter and capability-checked.
+  The one sanctioned exception to *observing* is `install --approvals`
+  (`PermissionRequest` hook, `src/approve-hook.js`): a decision channel, opt-in
+  twice (install, then arm), whose every failure path is exit-0-silent — the
+  documented "no opinion" — so the terminal prompt is always the floor. Its
+  deny reason is a fixed template (`Denied from the agent-cctv wall.`); never
+  interpolate tool input or operator text into it — it is model-visible.
 - **Do not feed `~/.agent-cctv/config.json` into `src/config.js`'s precedence
   chain.** It is a runtime echo written on every start, not operator config; one
   `--host 0.0.0.0` would otherwise stick forever. `resolve()` takes it as a

@@ -2199,3 +2199,184 @@ body[data-stale='true'] .archive {
   border-color: var(--ink-3);
   color: var(--ink);
 }
+
+/* ── remote approvals ─────────────────────────────────────────────────── */
+
+/*
+  The card is a security surface. The one rule that is layout, not taste:
+  .approval-v scrolls and never clips — an ellipsized command beside an
+  Allow button is a rubber stamp, so max-height + overflow, never
+  text-overflow.
+*/
+.approvals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A tile holding a pending decision breaks the every-frame-equal rule on
+   purpose. The buttons have to be reachable — a clipped Allow is a feature
+   that does not exist — and "bigger than its neighbours" is the right
+   urgency signal for the one tile that is waiting on a human. The wall grid
+   uses align-items: start, so the row simply grows. */
+.tile:has(.approval) {
+  height: auto;
+  min-height: var(--tile-h);
+}
+
+.approvals:empty {
+  display: none;
+}
+
+.approval {
+  border: 1px solid var(--steel);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.approval-head {
+  font-weight: 600;
+  color: var(--steel-ink);
+}
+
+.approval-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.approval-k {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.approval-v {
+  margin: 0;
+  min-width: 0;
+  flex: 1;
+  max-height: 14em;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+}
+
+.approval-meta {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.approval-hint {
+  display: none;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: italic;
+}
+
+body[data-unpaired='true'] .approval-hint {
+  display: block;
+}
+
+.approval-acts {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.approval-acts button {
+  appearance: none;
+  font: inherit;
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--edge);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.approval-allow {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--panel);
+}
+
+.approval-deny:hover {
+  border-color: var(--ink-3);
+}
+
+.act.shield[data-state='on'] {
+  background: var(--steel);
+  border-color: var(--steel);
+  color: var(--panel);
+}
+
+.pair-dialog {
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 18px;
+  max-width: 22rem;
+}
+
+.pair-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.pair-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.pair-copy {
+  margin: 0 0 12px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.pair-dialog input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 20px;
+  letter-spacing: 0.35em;
+  text-align: center;
+  padding: 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+.pair-error {
+  margin: 8px 0 0;
+  color: var(--steel-ink);
+  font-size: 12px;
+}
+
+.pair-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pair-go {
+  border-color: var(--ink-3);
+  color: var(--ink);
+}

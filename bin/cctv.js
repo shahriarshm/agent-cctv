@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import readline from 'node:readline';
@@ -34,7 +34,7 @@ const c = {
 // disabling it the same way; and either one leaves the subcommand unparsed,
 // so args._ is empty and `cmd` silently falls back to its "start" default —
 // masking the bug rather than surfacing it for anything but "start" itself.
-const BOOLEAN_FLAGS = new Set(['no-open', 'no-token', 'project', 'help', 'yes']);
+const BOOLEAN_FLAGS = new Set(['no-open', 'no-token', 'project', 'help', 'yes', 'approvals']);
 
 // The mirror of the list above: flags whose value may begin with a dash. The
 // generic rule below refuses one — sensible for `--host`, wrong for
@@ -99,6 +99,7 @@ ${c.bold('Usage')}
   agent-cctv views          List the view presets it can see
   agent-cctv install        Optional: add Claude Code hooks for instant events
   agent-cctv uninstall      Remove those hooks
+  agent-cctv pair           Show a one-time code that lets a device approve permissions
   agent-cctv doctor         Check what agent-cctv can read on this machine
 
 ${c.bold('Options')}
@@ -108,6 +109,7 @@ ${c.bold('Options')}
   --no-token       Skip the URL token          ${c.dim('(only if nothing else runs on this machine)')}
   --public-url <url>  Public URL when behind a reverse proxy ${c.dim('(adds its host to the allowlist)')}
   --project        install/uninstall into ./.claude/settings.json instead of global
+  --approvals      With install: also route permission prompts to the wall ${c.dim('(Claude Code ≥ 2.1.226)')}
 
 ${c.bold('Publishing')} ${c.dim('— puts the dashboard on the public internet')}
   --tunnel <name>     Publish through ${c.bold('cloudflare')} or ${c.bold('ngrok')} ${c.dim('(the binary must be installed)')}
@@ -410,7 +412,8 @@ async function cmdStatus() {
       `gemini ${geminiCaps().chats ? c.green('yes') : c.red('no')} · ` +
       `opencode ${opencodeCaps().db ? c.green('yes') : c.red('no')} · ` +
       `hermes ${hermesCaps().db ? c.green('yes') : c.red('no')} · ` +
-      `hooks ${hooks.installed.length ? c.green(`${hooks.installed.length}/9`) : c.dim('not installed (optional)')}`
+      `hooks ${hooks.installed.length ? c.green(`${hooks.installed.length}/9`) : c.dim('not installed (optional)')} · ` +
+      `approvals ${hooks.approvals ? c.green('yes') : c.dim('no')}`
   );
   const cfg = readConfig();
   if (cfg.port) console.log(`  ${c.dim(`last served on http://${cfg.host || DEFAULT_HOST}:${cfg.port}`)}`);
@@ -430,8 +433,54 @@ function cmdInstall(flags) {
     console.log(c.dim('  They add sub-second tool events, at a small latency cost per tool call.'));
     console.log(c.dim('  Restart running Claude Code sessions to pick them up.'));
     console.log('');
+    if (flags.approvals) {
+      let version = null;
+      try {
+        version = execFileSync('claude', ['--version'], { encoding: 'utf8', timeout: 5000 });
+      } catch {}
+      if (!installer.claudeVersionOk(version)) {
+        console.error(
+          c.red(`  ✗ remote approvals need Claude Code ≥ ${installer.MIN_CLAUDE_VERSION}`) +
+            c.dim(version ? ` (found ${version.trim()})` : ' (could not run `claude --version`)')
+        );
+        console.error(c.dim('  The PermissionRequest hook is verified against that build; older ones are untested.'));
+        console.error(c.dim('  The enrichment hooks above were still installed.'));
+        process.exitCode = 1;
+        return;
+      }
+      const a = installer.installApprovals({ file });
+      console.log(`  ${c.green('✓')} remote approvals hook installed (${c.bold(a.event)})`);
+      console.log(c.dim('  Arm it from the wall after pairing a device: agent-cctv pair'));
+      console.log('');
+    }
   } catch (err) {
     console.error(c.red('  ✗ ' + err.message));
+    process.exitCode = 1;
+  }
+}
+
+async function cmdPair() {
+  const cfg = readConfig();
+  const port = Number(process.env.AGENT_CCTV_PORT) || cfg.port || DEFAULT_PORT;
+  const host = !cfg.host || cfg.host === '0.0.0.0' ? '127.0.0.1' : cfg.host;
+  try {
+    const res = await fetch(`http://${host}:${port}/api/pair/new`, {
+      method: 'POST',
+      headers: { 'x-cctv-token': cfg.token || '' },
+    });
+    if (!res.ok) throw new Error(`the wall answered ${res.status}`);
+    const { code, ttlMs } = await res.json();
+    const mins = Math.round(ttlMs / 60000);
+    console.log('');
+    console.log(`  pairing code  ${c.bold(c.cyan(code))}`);
+    console.log('');
+    console.log(c.dim('  On the device that should get Allow/Deny buttons, open the wall,'));
+    console.log(c.dim('  tap the shield in the header, and enter this code.'));
+    console.log(c.dim(`  One device, one use, ${mins} minutes. Restarting the wall unpairs everyone.`));
+    console.log('');
+  } catch (err) {
+    console.error(c.red('  ✗ could not reach the wall — is agent-cctv running?'));
+    console.error(c.dim(`    ${err.message}`));
     process.exitCode = 1;
   }
 }
@@ -478,6 +527,13 @@ function cmdDoctor() {
   console.log(
     `  ${hooks.installed.length ? c.green('✓') : c.dim('–')} hooks${' '.repeat(18)} ${c.dim(
       hooks.installed.length ? hooks.installed.join(', ') : 'not installed (optional)'
+    )}`
+  );
+  console.log(
+    `  ${hooks.approvals ? c.green('✓') : c.dim('–')} approvals${' '.repeat(14)} ${c.dim(
+      hooks.approvals
+        ? 'permission prompts can be answered from the wall'
+        : 'not installed (agent-cctv install --approvals)'
     )}`
   );
   const views = loadViews();
@@ -567,6 +623,8 @@ async function main() {
     cmdInstall(args.flags);
   } else if (cmd === 'uninstall') {
     cmdUninstall(args.flags);
+  } else if (cmd === 'pair') {
+    await cmdPair();
   } else if (cmd === 'views') {
     cmdViews();
   } else if (cmd === 'doctor') {

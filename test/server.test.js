@@ -493,3 +493,322 @@ test('close() completes with an SSE stream still open', async () => {
   ]);
   reader.cancel().catch(() => {});
 });
+
+/* ── remote approvals ─────────────────────────────────────────────────── */
+
+/** raw() for POSTs: Host passes through verbatim, response cookies visible. */
+function rawPost(port, path, { headers = {}, body = '' } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, path, method: 'POST', headers },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
+      }
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+/** Pair a device over HTTP and hand back its act cookie. */
+async function pairDevice(s) {
+  const { code } = await (
+    await fetch(s.url('/api/pair/new'), { method: 'POST', headers: { 'x-cctv-token': TOKEN } })
+  ).json();
+  const res = await fetch(s.url('/api/pair'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+    body: JSON.stringify({ code }),
+  });
+  assert.equal(res.status, 200);
+  const setCookie = res.headers.get('set-cookie');
+  assert.match(setCookie, /cctv-act=/);
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /SameSite=Strict/);
+  return setCookie.match(/cctv-act=[^;,\s]+/)[0]; // "cctv-act=<secret>"
+}
+
+test('a pending POST while disarmed returns armed:false immediately', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url('/api/approvals/pending'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+      body: JSON.stringify({ session_id: 'x', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { armed: false });
+  } finally {
+    await s.close();
+  }
+});
+
+test('the whole loop: pair, arm, hold a pending, decide allow', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const cookie = await pairDevice(s);
+    const armRes = await fetch(s.url('/api/approvals/armed'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN, cookie },
+      body: JSON.stringify({ on: true }),
+    });
+    assert.equal(armRes.status, 200);
+    assert.equal((await armRes.json()).armed, true);
+
+    // Fire the hook's POST but do not await it — it is designed to hang.
+    const held = fetch(s.url('/api/approvals/pending'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+      body: JSON.stringify({
+        session_id: 'sess-1',
+        tool_name: 'Bash',
+        tool_input: { command: 'rm -rf build' },
+        cwd: '/tmp/p',
+        permission_mode: 'default',
+      }),
+    });
+    // The pending must appear in state before anything resolves it.
+    let pendings = [];
+    for (let i = 0; i < 50 && !pendings.length; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      pendings = (await (await fetch(s.url('/api/state'), { headers: { 'x-cctv-token': TOKEN } })).json())
+        .approvals.pendings;
+    }
+    assert.equal(pendings.length, 1);
+    assert.equal(pendings[0].toolName, 'Bash');
+    assert.equal(pendings[0].sessionId, 'sess-1');
+
+    const decide = await fetch(s.url(`/api/approvals/${pendings[0].id}/decision`), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN, cookie },
+      body: JSON.stringify({ behavior: 'allow' }),
+    });
+    assert.equal(decide.status, 200);
+    const hookSaw = await (await held).json();
+    assert.deepEqual(hookSaw, { armed: true, decision: { behavior: 'allow' } });
+
+    // A second decision on the same id tells the loser what happened.
+    const again = await fetch(s.url(`/api/approvals/${pendings[0].id}/decision`), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN, cookie },
+      body: JSON.stringify({ behavior: 'deny' }),
+    });
+    assert.equal(again.status, 409);
+    assert.deepEqual(await again.json(), { outcome: 'allow' });
+  } finally {
+    await s.close();
+  }
+});
+
+test('the view token alone can never decide or arm', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    for (const [path, body] of [
+      ['/api/approvals/whatever/decision', { behavior: 'allow' }],
+      ['/api/approvals/armed', { on: true }],
+    ]) {
+      const res = await fetch(s.url(path), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+        body: JSON.stringify(body),
+      });
+      assert.equal(res.status, 403, `${path} must demand the act cookie`);
+    }
+    // And the act secret is cookie-only: query and header spellings are dead.
+    const cookie = await pairDevice(s);
+    const secret = cookie.split('=')[1];
+    const viaHeader = await fetch(s.url('/api/approvals/armed'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN, 'x-cctv-act': secret },
+      body: JSON.stringify({ on: true }),
+    });
+    assert.equal(viaHeader.status, 403);
+    const viaQuery = await fetch(s.url(`/api/approvals/armed?act=${secret}`), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+      body: JSON.stringify({ on: true }),
+    });
+    assert.equal(viaQuery.status, 403);
+  } finally {
+    await s.close();
+  }
+});
+
+test('disarming resolves held pendings with a null decision', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const cookie = await pairDevice(s);
+    s.server.approvals.setArmed(true);
+    const held = fetch(s.url('/api/approvals/pending'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+      body: JSON.stringify({ session_id: 'x', tool_name: 'Bash', tool_input: {} }),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const off = await fetch(s.url('/api/approvals/armed'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN, cookie },
+      body: JSON.stringify({ on: false }),
+    });
+    assert.equal(off.status, 200);
+    assert.deepEqual(await (await held).json(), { armed: true, decision: null });
+  } finally {
+    await s.close();
+  }
+});
+
+test('a pending whose hook socket dies expires and later reads as such', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const cookie = await pairDevice(s);
+    s.server.approvals.setArmed(true);
+    const ac = new AbortController();
+    fetch(s.url('/api/approvals/pending'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+      body: JSON.stringify({ session_id: 'x', tool_name: 'Bash', tool_input: {} }),
+      signal: ac.signal,
+    }).catch(() => {});
+    let pendings = [];
+    for (let i = 0; i < 50 && !pendings.length; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      pendings = s.server.approvals.list();
+    }
+    const id = pendings[0].id;
+    ac.abort();
+    for (let i = 0; i < 50 && s.server.approvals.list().length; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(s.server.approvals.list().length, 0, 'socket close must expire the pending');
+    const late = await fetch(s.url(`/api/approvals/${id}/decision`), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN, cookie },
+      body: JSON.stringify({ behavior: 'allow' }),
+    });
+    assert.equal(late.status, 409);
+    assert.deepEqual(await late.json(), { outcome: 'expired' });
+  } finally {
+    await s.close();
+  }
+});
+
+test('the wrong pairing code five times kills the code', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const { code } = await (
+      await fetch(s.url('/api/pair/new'), { method: 'POST', headers: { 'x-cctv-token': TOKEN } })
+    ).json();
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(s.url('/api/pair'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+        body: JSON.stringify({ code: code === '000000' ? '000001' : '000000' }),
+      });
+      assert.equal(res.status, 403);
+    }
+    const real = await fetch(s.url('/api/pair'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+      body: JSON.stringify({ code }),
+    });
+    assert.equal(real.status, 403, 'the burned code must not pair');
+  } finally {
+    await s.close();
+  }
+});
+
+test('pairing requires view auth', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const res = await fetch(s.url('/api/pair'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: '123456' }),
+    });
+    assert.equal(res.status, 401, 'the open internet cannot even attempt the code');
+  } finally {
+    await s.close();
+  }
+});
+
+test('the act cookie is Secure through the tunnel host and not on loopback', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    s.server.setTunnel({ host: 'abc.trycloudflare.com', provider: 'cloudflare', url: 'https://abc.trycloudflare.com', since: 1 });
+    const mint = () =>
+      fetch(s.url('/api/pair/new'), { method: 'POST', headers: { 'x-cctv-token': TOKEN } }).then((r) => r.json());
+
+    const { code: c1 } = await mint();
+    const viaTunnel = await rawPost(s.port, '/api/pair', {
+      headers: {
+        host: 'abc.trycloudflare.com',
+        'content-type': 'application/json',
+        'x-cctv-token': TOKEN,
+      },
+      body: JSON.stringify({ code: c1 }),
+    });
+    assert.equal(viaTunnel.status, 200);
+    assert.match(String(viaTunnel.headers['set-cookie']), /Secure/);
+
+    const { code: c2 } = await mint();
+    const viaLoopback = await rawPost(s.port, '/api/pair', {
+      headers: { host: 'localhost', 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+      body: JSON.stringify({ code: c2 }),
+    });
+    assert.equal(viaLoopback.status, 200);
+    assert.doesNotMatch(String(viaLoopback.headers['set-cookie']), /Secure/);
+  } finally {
+    await s.close();
+  }
+});
+
+test('snapshot and the SSE stream carry approvals state', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    const state = await (await fetch(s.url('/api/state'), { headers: { 'x-cctv-token': TOKEN } })).json();
+    assert.deepEqual(state.approvals, { armed: false, until: null, pendings: [] });
+    // Arming broadcasts an `approvals` frame to connected SSE clients.
+    const res = await new Promise((resolve, reject) => {
+      const req = http.get(
+        { host: '127.0.0.1', port: s.port, path: '/api/stream', headers: { 'x-cctv-token': TOKEN } },
+        resolve
+      );
+      req.on('error', reject);
+    });
+    let buf = '';
+    const sawApprovals = new Promise((resolveSeen) => {
+      res.on('data', (c) => {
+        buf += c;
+        if (buf.includes('event: approvals')) resolveSeen();
+      });
+    });
+    s.server.approvals.setArmed(true);
+    await sawApprovals;
+    res.destroy();
+    assert.ok(buf.includes('"armed":true'));
+  } finally {
+    await s.close();
+  }
+});
+
+test('server.close() drains held approval long-polls so shutdown is not hostage to them', async () => {
+  const s = await serve({ token: TOKEN });
+  try {
+    s.server.approvals.setArmed(true);
+    const held = fetch(s.url('/api/approvals/pending'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
+      body: JSON.stringify({ session_id: 'x', tool_name: 'Bash', tool_input: {} }),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    await s.close(); // must return, not hang
+    const body = await (await held).json();
+    assert.deepEqual(body, { armed: true, decision: null });
+  } finally {
+    try {
+      await s.close();
+    } catch {}
+  }
+});

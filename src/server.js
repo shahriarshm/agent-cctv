@@ -15,6 +15,7 @@ import { fromHook } from './sources/claude-code/hooks.js';
 import { readTasks } from './sources/claude-code/tasks.js';
 import { listSessions, loadSession } from './history.js';
 import { loadViews, watchViews, writeView } from './views.js';
+import { createApprovals } from './approvals.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -36,6 +37,12 @@ const COOKIE_NAME = 'cctv';
  * of the address bar and history, so a browser restart left a bookmarked `/`
  * with no way back in. This keeps the credential outliving that restart. */
 const COOKIE_MAX_AGE_S = 30 * 24 * 60 * 60;
+
+const ACT_COOKIE = 'cctv-act';
+/** 7 days where the view cookie gets 30: this one is execute power on a
+ *  stealable phone — and server memory is the real authority anyway, so a
+ *  longer-lived cookie would only outlive its own validity. */
+const ACT_COOKIE_MAX_AGE_S = 7 * 24 * 60 * 60;
 
 /**
  * The dashboard streams source code out of transcripts, so loopback alone is not
@@ -137,6 +144,21 @@ export function createServer({
   store.on('activity', (ev, s) => broadcast('activity', { ...ev, sessionName: s.name || s.project }));
   store.on('removed', (id) => broadcast('removed', { id }));
 
+  const approvals = createApprovals({
+    onChange: (reason) => {
+      broadcast('approvals', approvals.state());
+      // The terminal is the operator's log of record for arming — a remote
+      // toggle they did not expect deserves a line they will actually see.
+      if (reason === 'armed') console.log('  approvals armed — permission prompts also go to the wall');
+      if (reason === 'disarmed') console.log('  approvals disarmed');
+      if (reason === 'auto-disarm') console.log('  approvals auto-disarmed (4h) — re-arm from a paired device');
+    },
+  });
+
+  function actAuthed(req) {
+    return cookieValues(req, ACT_COOKIE).some((v) => approvals.isDevice(v));
+  }
+
   /*
     Read once at startup and again on any change, then pushed. The browser does
     the matching — it already holds every session, so a view switch is instant
@@ -180,21 +202,23 @@ export function createServer({
   }
 
   /**
-   * All `cctv=` values on the request, not just the first. A cookie header can
-   * legally carry more than one pair with the same name — e.g. a sibling
-   * origin under a shared parent domain (`Domain=corp.example; cctv=junk` on
-   * `cctv.corp.example`) — and their order is not guaranteed. Stopping at the
-   * first match would let a junk pair shadow the real one and lock the user
-   * out with no recovery, so every candidate is returned and checked.
+   * All values for one cookie name on the request, not just the first. A
+   * cookie header can legally carry more than one pair with the same name —
+   * e.g. a sibling origin under a shared parent domain
+   * (`Domain=corp.example; cctv=junk` on `cctv.corp.example`) — and their
+   * order is not guaranteed. Stopping at the first match would let a junk
+   * pair shadow the real one and lock the user out with no recovery, so
+   * every candidate is returned and checked. The act cookie shares both the
+   * problem and this answer.
    */
-  function cookieTokens(req) {
+  function cookieValues(req, name) {
     const raw = req.headers.cookie;
     if (!raw) return [];
     const values = [];
     for (const part of raw.split(';')) {
       const eq = part.indexOf('=');
       if (eq < 0) continue;
-      if (part.slice(0, eq).trim() !== COOKIE_NAME) continue;
+      if (part.slice(0, eq).trim() !== name) continue;
       try {
         values.push(decodeURIComponent(part.slice(eq + 1).trim()));
       } catch {
@@ -202,6 +226,10 @@ export function createServer({
       }
     }
     return values;
+  }
+
+  function cookieTokens(req) {
+    return cookieValues(req, COOKIE_NAME);
   }
 
   /** Which credential authenticated this request, or null. */
@@ -231,8 +259,8 @@ export function createServer({
     return secureCookie;
   }
 
-  /** The store is about sessions, and a tunnel is not one. Merged here. */
-  const snapshot = () => ({ ...store.snapshot(), tunnel });
+  /** The store is about sessions; a tunnel and the approvals state are not. */
+  const snapshot = () => ({ ...store.snapshot(), tunnel, approvals: approvals.state() });
 
   /*
     Every throw inside the handler has to land here.
@@ -305,6 +333,93 @@ export function createServer({
     // Everything below returns session content.
     if (route.startsWith('/api/') && !authed(req, url)) {
       return json(res, 401, { error: 'token required' });
+    }
+
+    if (route === '/api/approvals/pending' && req.method === 'POST') {
+      let body;
+      try {
+        body = safeJson(await readBody(req));
+      } catch {
+        return json(res, 413, { error: 'too large' });
+      }
+      if (!body || typeof body !== 'object') return json(res, 400, { error: 'bad json' });
+      if (!approvals.isArmed()) return json(res, 200, { armed: false });
+      const meta = {
+        sessionId: String(body.session_id || ''),
+        toolName: String(body.tool_name || ''),
+        toolInput: body.tool_input ?? null,
+        cwd: String(body.cwd || ''),
+        permissionMode: String(body.permission_mode || ''),
+      };
+      // The pending IS this response. resolve() fires exactly once — from a
+      // decision, a drain, or never (socket close removes it first). No
+      // keep-alive: the hook connects to loopback directly, so there is no
+      // intermediary that could reap an idle connection.
+      const pending = approvals.add(meta, (decision) => {
+        try {
+          json(res, 200, { armed: true, decision });
+        } catch {}
+      });
+      // res, not req: the request body was already consumed, so req 'close'
+      // just means "message complete". res 'close' is the socket actually
+      // going away — after a normal decision it fires too, and remove() is a
+      // no-op because decide() already deleted the pending.
+      res.on('close', () => approvals.remove(pending.id));
+      return; // held open on purpose
+    }
+
+    const decision = route.match(/^\/api\/approvals\/([\w-]+)\/decision$/);
+    if (decision && req.method === 'POST') {
+      if (!actAuthed(req)) return json(res, 403, { error: 'pairing required' });
+      let body;
+      try {
+        body = safeJson(await readBody(req, 64 * 1024));
+      } catch {
+        return json(res, 413, { error: 'too large' });
+      }
+      const behavior = body?.behavior;
+      if (behavior !== 'allow' && behavior !== 'deny') {
+        return json(res, 400, { error: 'behavior must be allow or deny' });
+      }
+      const r = approvals.decide(decision[1], behavior);
+      if (!r.ok) return json(res, 409, { outcome: r.outcome });
+      return json(res, 200, { ok: true });
+    }
+
+    if (route === '/api/approvals/armed' && req.method === 'POST') {
+      if (!actAuthed(req)) return json(res, 403, { error: 'pairing required' });
+      let body;
+      try {
+        body = safeJson(await readBody(req, 4 * 1024));
+      } catch {
+        return json(res, 413, { error: 'too large' });
+      }
+      if (typeof body?.on !== 'boolean') return json(res, 400, { error: 'on must be a boolean' });
+      approvals.setArmed(body.on);
+      return json(res, 200, approvals.state());
+    }
+
+    if (route === '/api/pair/new' && req.method === 'POST') {
+      return json(res, 200, approvals.mintCode());
+    }
+
+    if (route === '/api/pair' && req.method === 'POST') {
+      let body;
+      try {
+        body = safeJson(await readBody(req, 4 * 1024));
+      } catch {
+        return json(res, 413, { error: 'too large' });
+      }
+      const r = approvals.tryPair(String(body?.code ?? ''));
+      if (!r.ok) return json(res, 403, { error: 'bad or expired code' });
+      // Append, never overwrite: the view-cookie swap above may have set one
+      // already on this same response.
+      const prev = res.getHeader('set-cookie');
+      const act =
+        `${ACT_COOKIE}=${r.secret}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${ACT_COOKIE_MAX_AGE_S}` +
+        (secureFor(req) ? '; Secure' : '');
+      res.setHeader('set-cookie', [...(Array.isArray(prev) ? prev : prev ? [prev] : []), act]);
+      return json(res, 200, { ok: true });
     }
 
     if (route === '/api/state') return json(res, 200, snapshot());
@@ -438,6 +553,11 @@ export function createServer({
         } catch {}
       }
       clients.clear();
+      // Held approval long-polls are in-flight requests; close() would wait
+      // on them for up to the hook deadline. Draining answers them with
+      // no-decision, which is also the right message: this server is going
+      // away, and the terminal prompt is already on screen.
+      approvals.drain();
       // A browser holds its connection open between requests too, and that
       // also counts as in-flight for close().
       server.closeIdleConnections?.();
@@ -447,6 +567,7 @@ export function createServer({
 
   server.store = store;
   server.sources = sources;
+  server.approvals = approvals;
   server.clientCount = () => clients.size;
   server.views = () => views;
   /**

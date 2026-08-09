@@ -437,6 +437,47 @@ the top right. If the tunnel drops, that link is dead — a re-opened quick tunn
 comes back on a *different* hostname — and agent-cctv says so and keeps serving
 locally rather than trying to reconnect a link nobody can use.
 
+### Approving from your phone
+
+You left the house, the wall is open on your phone, and a Claude Code session
+hits a permission prompt. Opt in, and the prompt appears on that session's tile
+with the **whole** command — never an ellipsis with an Allow button next to it —
+and Allow/Deny buttons that answer it. The terminal prompt stays on screen the
+entire time; whichever side answers first wins, and every failure — wall down,
+nobody paired, five minutes of silence — ends at that terminal prompt exactly
+as if this feature did not exist.
+
+One sentence governs the design:
+
+> An Approve button behind the watch credential turns read exposure into code
+> execution on the operator's machine.
+
+So acting is a second credential, not a second use of the first. The watch
+link still only watches. To put buttons on a device:
+
+```sh
+agent-cctv install --approvals   # once — adds the PermissionRequest hook
+agent-cctv pair                  # prints a six-digit code in the terminal
+```
+
+Enter the code on the device (tap the shield in the header). It is one-time,
+dies after five minutes or five wrong guesses, and can only be attempted by
+someone who already holds the watch link. Then arm the shield. Armed means
+permission prompts also go to the wall; it switches itself off after four
+hours, and disarming (or the wall restarting) instantly releases anything
+pending back to the terminal. Restarting the wall also unpairs every device —
+that is the kill switch, and it is one ctrl-c away.
+
+What the card shows is the security boundary, so it refuses to be polite:
+the full command or file diff in a scrolling block, the byte size, and any
+invisible characters spelled out — a command hiding behind a U+202E bidi
+override renders as `⟨U+202E⟩`, not as the innocuous string it was disguised
+as. Deny sends the model a fixed template line, never your own words.
+
+The honest limits: Claude Code ≥ 2.1.226 only — Codex, Gemini, OpenCode and
+Hermes have no mechanism for this, so their tiles never grow buttons — and
+alerts need the wall open in a tab; there is no push to a closed browser.
+
 ### Retention
 
 agent-cctv still stores nothing. The agents' own JSONL logs are the durable

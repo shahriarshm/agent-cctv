@@ -227,6 +227,20 @@
               <path d="M12 8.2V12l2.8 1.7" />
             </svg>
           </button>
+          <button
+            class="act shield"
+            id="armed"
+            type="button"
+            data-state="off"
+            aria-pressed="false"
+            aria-label="Remote approvals"
+            title="Remote approvals off — tap to arm"
+          >
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3 5 5.8v5.4c0 4.3 3 8.1 7 9 4-1 7-4.7 7-9V5.8Z" />
+              <path d="M9.2 12.2l2 2 3.6-4" />
+            </svg>
+          </button>
           <button class="act bell" id="bell" type="button" data-state="off" aria-pressed="false" aria-label="Alerts">
             <svg class="i bell-glyph" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M18 10a6 6 0 1 0-12 0c0 4.5-2 5.5-2 5.5h16s-2-1-2-5.5" />
@@ -358,6 +372,35 @@
       <div class="inspector-tasks" id="inspector-tasks" hidden></div>
       <div class="timeline" id="timeline"></div>
     </aside>
+
+    <!--
+      Pairing is the act credential's whole enrolment UI. The code is minted
+      at the terminal (agent-cctv pair) — the possession proof — and consumed
+      here, once. Everything a decision needs beyond *viewing* rides on the
+      cookie this sets.
+    -->
+    <dialog class="pair-dialog" id="pair-dialog">
+      <form id="pair-form">
+        <h2 id="pair-title">Pair this device</h2>
+        <p class="pair-copy">
+          Run <code>agent-cctv pair</code> on the machine that runs the wall, then enter the
+          six-digit code. One code, one device, five minutes.
+        </p>
+        <input
+          id="pair-code"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          maxlength="6"
+          placeholder="000000"
+          aria-label="Pairing code"
+        />
+        <p class="pair-error" id="pair-error" role="alert" hidden>That code was wrong or expired.</p>
+        <div class="pair-acts">
+          <button type="button" class="chip" id="pair-cancel">Cancel</button>
+          <button type="submit" class="chip pair-go" id="pair-submit">Pair</button>
+        </div>
+      </form>
+    </dialog>
 
     <script type="module" src="/app.js"></script>
   </body>
