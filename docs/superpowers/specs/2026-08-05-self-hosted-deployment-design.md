@@ -46,6 +46,12 @@ disproportionate to a 5.2k-line tool.
   Read-only is exactly what makes a shared token proportionate. A single write endpoint
   inverts the threat model and would force the accounts question back open.
 
+  *Superseded 2026-08-09 by the remote-approvals design:* answering a permission
+  prompt from the wall now exists, but behind a second credential class (the
+  `cctv-act` pairing cookie) rather than by reopening the accounts question —
+  the shared view token still cannot act, which is what this bullet was
+  protecting.
+
 ## Trust model
 
 Stated plainly, because the docs must state it plainly:

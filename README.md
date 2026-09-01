@@ -11,6 +11,10 @@ That's the whole setup. No install step, no config, no restarting your sessions 
 it reads Claude Code's own state directly, so sessions you started an hour ago
 show up the moment the dashboard opens.
 
+macOS and Linux. On Windows, run it inside WSL — the state files it reads and
+the pid liveness check are Unix-shaped, and nothing here has been tested
+natively.
+
 ## What you see
 
 One tile per session, sorted so the ones that need you come first:
@@ -595,10 +599,14 @@ Event kinds are deliberately few: `prompt`, `assistant_text`, `thinking`,
 Anything product-specific belongs in `meta`, not in a new kind — Codex's turn
 boundaries become a state in `meta`, not a `turn_start` event.
 
+If your agent keeps session records on disk, an adapter is a welcome pull
+request — the five under `src/sources/` are the template, and each is small
+enough to read in one sitting.
+
 ## A caveat worth knowing
 
 `~/.claude/sessions`, the transcript entry types, and `~/.claude/tasks` are
-undocumented Claude Code internals (verified against 2.1.222). A Claude Code
+undocumented Claude Code internals (verified against 2.1.252). A Claude Code
 update could move them. `agent-cctv doctor` tells you what it can currently
 read, and the dashboard degrades to transcript-only inference rather than
 silently showing stale states.
