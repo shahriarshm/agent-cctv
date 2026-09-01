@@ -171,17 +171,23 @@ test('a configured public Origin is accepted', async () => {
 
 /* ── cookie auth ───────────────────────────────────────────────────────── */
 
+/*
+  Cookie assertions go through raw() / rawPost(), never fetch: Node's fetch hid
+  Set-Cookie from Headers entirely until ~18.16 (undici only special-cased it
+  when getSetCookie landed), so a fetch-based read passes on new Node and reads
+  null on the 18.2 engines floor. Same story as the Host tests above.
+*/
 function cookieFrom(res) {
-  const raw = res.headers.get('set-cookie');
+  const raw = res.headers['set-cookie']?.[0];
   return raw ? raw.split(';')[0] : null;
 }
 
 test('a query-string auth exchanges the token for a cookie', async () => {
   const s = await serve({ token: TOKEN });
   try {
-    const res = await fetch(s.url(`/api/state?token=${TOKEN}`));
+    const res = await s.raw(`/api/state?token=${TOKEN}`);
     assert.equal(res.status, 200);
-    const set = res.headers.get('set-cookie');
+    const set = res.headers['set-cookie']?.[0];
     assert.ok(set, 'expected a Set-Cookie header');
     assert.match(set, /^cctv=/);
     assert.match(set, /HttpOnly/i);
@@ -197,8 +203,8 @@ test('the session cookie carries a Max-Age, so it outlives a browser restart', a
   // set — so a restarted browser lands on a bare "/" with no way back in.
   const s = await serve({ token: TOKEN });
   try {
-    const res = await fetch(s.url(`/api/state?token=${TOKEN}`));
-    const set = res.headers.get('set-cookie');
+    const res = await s.raw(`/api/state?token=${TOKEN}`);
+    const set = res.headers['set-cookie']?.[0];
     assert.match(set, /Max-Age=\d+/i);
     const [, seconds] = set.match(/Max-Age=(\d+)/i);
     assert.ok(Number(seconds) >= 29 * 24 * 60 * 60, `expected roughly 30 days, got ${seconds}s`);
@@ -210,8 +216,8 @@ test('the session cookie carries a Max-Age, so it outlives a browser restart', a
 test('the cookie alone authorizes a later request', async () => {
   const s = await serve({ token: TOKEN });
   try {
-    const first = await fetch(s.url(`/api/state?token=${TOKEN}`));
-    const res = await fetch(s.url('/api/state'), { headers: { cookie: cookieFrom(first) } });
+    const first = await s.raw(`/api/state?token=${TOKEN}`);
+    const res = await s.raw('/api/state', { cookie: cookieFrom(first) });
     assert.equal(res.status, 200);
   } finally {
     await s.close();
@@ -245,16 +251,16 @@ test('a junk cctv= pair does not shadow a genuine one later in the header', asyn
 test('Secure is set only when the deployment is https', async () => {
   const plain = await serve({ token: TOKEN, secureCookie: false });
   try {
-    const res = await fetch(plain.url(`/api/state?token=${TOKEN}`));
-    assert.doesNotMatch(res.headers.get('set-cookie'), /Secure/i);
+    const res = await plain.raw(`/api/state?token=${TOKEN}`);
+    assert.doesNotMatch(String(res.headers['set-cookie']), /Secure/i);
   } finally {
     await plain.close();
   }
 
   const tls = await serve({ token: TOKEN, secureCookie: true });
   try {
-    const res = await fetch(tls.url(`/api/state?token=${TOKEN}`));
-    assert.match(res.headers.get('set-cookie'), /Secure/i);
+    const res = await tls.raw(`/api/state?token=${TOKEN}`);
+    assert.match(String(res.headers['set-cookie']), /Secure/i);
   } finally {
     await tls.close();
   }
@@ -263,9 +269,9 @@ test('Secure is set only when the deployment is https', async () => {
 test('loading the page with a token sets the cookie before any API call', async () => {
   const s = await serve({ token: TOKEN });
   try {
-    const res = await fetch(s.url(`/?token=${TOKEN}`));
+    const res = await s.raw(`/?token=${TOKEN}`);
     assert.equal(res.status, 200);
-    assert.match(res.headers.get('set-cookie') || '', /^cctv=/);
+    assert.match(res.headers['set-cookie']?.[0] || '', /^cctv=/);
   } finally {
     await s.close();
   }
@@ -274,9 +280,9 @@ test('loading the page with a token sets the cookie before any API call', async 
 test('an already-cookied request is not re-issued a cookie', async () => {
   const s = await serve({ token: TOKEN });
   try {
-    const first = await fetch(s.url(`/api/state?token=${TOKEN}`));
-    const res = await fetch(s.url('/api/state'), { headers: { cookie: cookieFrom(first) } });
-    assert.equal(res.headers.get('set-cookie'), null);
+    const first = await s.raw(`/api/state?token=${TOKEN}`);
+    const res = await s.raw('/api/state', { cookie: cookieFrom(first) });
+    assert.equal(res.headers['set-cookie'], undefined);
   } finally {
     await s.close();
   }
@@ -517,13 +523,12 @@ async function pairDevice(s) {
   const { code } = await (
     await fetch(s.url('/api/pair/new'), { method: 'POST', headers: { 'x-cctv-token': TOKEN } })
   ).json();
-  const res = await fetch(s.url('/api/pair'), {
-    method: 'POST',
+  const res = await rawPost(s.port, '/api/pair', {
     headers: { 'content-type': 'application/json', 'x-cctv-token': TOKEN },
     body: JSON.stringify({ code }),
   });
   assert.equal(res.status, 200);
-  const setCookie = res.headers.get('set-cookie');
+  const setCookie = String(res.headers['set-cookie']);
   assert.match(setCookie, /cctv-act=/);
   assert.match(setCookie, /HttpOnly/);
   assert.match(setCookie, /SameSite=Strict/);
