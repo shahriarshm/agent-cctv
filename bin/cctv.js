@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn, execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import readline from 'node:readline';
@@ -639,6 +640,18 @@ async function main() {
 // Importing this file must not start a server — test/args.test.js imports it
 // for parseArgs alone. `import.meta.main` is Node 24+; comparing argv[1] to
 // this module's own path is the spelling that works on the ≥18 this supports.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Through the realpath on both sides: npm's .bin shim is a symlink and node
+// resolves the entry module past it while argv[1] keeps the shim path, so a
+// textual compare made every `npx agent-cctv` a silent no-op (v0.1.0 shipped
+// that way). realpathSync can itself throw on a deleted cwd; treat that as
+// "not the entry script" rather than crashing an importer.
+const invokedAs = (() => {
+  try {
+    return process.argv[1] ? fs.realpathSync(path.resolve(process.argv[1])) : null;
+  } catch {
+    return null;
+  }
+})();
+if (invokedAs === fs.realpathSync(fileURLToPath(import.meta.url))) {
   await main();
 }

@@ -439,3 +439,24 @@ test('a tunnel that publishes prints the public URL and a separate tokened link'
       fs.rmSync(claudeDir, { recursive: true, force: true });
     });
 });
+
+/* ── the npm .bin shim ─────────────────────────────────────────────────── */
+
+test('the cli still runs when invoked through a symlink, like npm\'s .bin shim', () => {
+  // npm installs bin entries as symlinks (node_modules/.bin/agent-cctv ->
+  // ../agent-cctv/bin/cctv.js). Node resolves the entry module through the
+  // symlink but argv[1] keeps the shim path, so an is-main guard comparing
+  // the two paths textually concludes it is not the entry script and exits 0
+  // in silence — which is exactly how `npx agent-cctv` shipped broken in
+  // 0.1.0 while `node bin/cctv.js` worked all along.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cctv-shim-'));
+  const shim = path.join(dir, 'agent-cctv');
+  fs.symlinkSync(CLI, shim);
+  try {
+    const res = spawnSync(process.execPath, [shim, '--help'], { encoding: 'utf8', timeout: 10_000 });
+    assert.equal(res.status, 0);
+    assert.match(res.stdout, /a live wall of what your coding agents are doing/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
