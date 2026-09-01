@@ -1,0 +1,36 @@
+name: release
+
+# Pushing a v* tag publishes that version to npm and creates the GitHub
+# release. npm auth is OIDC trusted publishing — no token lives in this repo;
+# npmjs.com's package settings name this exact workflow file as the trusted
+# publisher, which is also why renaming this file breaks publishing until the
+# npm side is updated to match.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # create the GitHub release
+  id-token: write # mint the OIDC token npm trusts
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      # Trusted publishing needs npm ≥ 11.5.1, newer than what rides along
+      # with the runner's node.
+      - run: npm install -g npm@latest
+      - run: npm test
+      # A tag that disagrees with package.json means the wrong commit was
+      # tagged — refuse before npm does something irreversible with it.
+      - name: tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm publish
+      - run: gh release create "$GITHUB_REF_NAME" --title "agent-cctv ${GITHUB_REF_NAME#v}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

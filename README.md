@@ -631,4 +631,9 @@ publishes no mark for any of them.
 npm test
 ```
 
+Releasing is tagging: bump the version in `package.json`, commit, tag it
+`vX.Y.Z` and push the tag. The release workflow runs the tests, publishes to
+npm through OIDC trusted publishing — no token in the repo — and creates the
+GitHub release. A tag that disagrees with `package.json` is refused.
+
 MIT.
