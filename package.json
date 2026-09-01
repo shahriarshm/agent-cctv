@@ -28,7 +28,7 @@
   },
   "scripts": {
     "start": "node bin/cctv.js",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "claude-code",
