@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "CCTV for coding agents — a live dashboard of what every agent on your machine is doing",
   "type": "module",
+  "author": "Shahriar Shariati",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shahriarshm/agent-cctv.git"
+  },
+  "homepage": "https://github.com/shahriarshm/agent-cctv#readme",
+  "bugs": {
+    "url": "https://github.com/shahriarshm/agent-cctv/issues"
+  },
   "bin": {
     "agent-cctv": "bin/cctv.js",
     "cctv": "bin/cctv.js"
