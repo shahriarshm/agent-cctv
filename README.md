@@ -11,6 +11,11 @@ That's the whole setup. No install step, no config, no restarting your sessions 
 it reads Claude Code's own state directly, so sessions you started an hour ago
 show up the moment the dashboard opens.
 
+![The wall: six sessions across five agents, the one blocked on a permission prompt sorted first and framed red](https://raw.githubusercontent.com/shahriarshm/agent-cctv/main/docs/screenshots/wall.png)
+
+*Demo data. The session that needs you is first, red, and pulsing; everything
+else is just working.*
+
 macOS and Linux. On Windows, run it inside WSL — the state files it reads and
 the pid liveness check are Unix-shaped, and nothing here has been tested
 natively.
@@ -44,6 +49,8 @@ Click any tile for the full timeline: every prompt, thought and tool call, with
 subagent work marked in its own lane. A tool call is one row, not two — it
 appears when the call starts, in amber while it is in flight, and is completed in
 place with its outcome and how long it took once the result lands.
+
+![The inspector: session stats, the live task list, and the timeline of prompts, thoughts and tool calls](https://raw.githubusercontent.com/shahriarshm/agent-cctv/main/docs/screenshots/timeline.png)
 
 ### Filtering and grouping
 
